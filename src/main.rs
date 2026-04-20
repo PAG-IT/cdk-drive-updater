@@ -3,11 +3,15 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+mod installed;
+
 use anyhow::{Context, Result};
 use chrono::{Local, Timelike};
 use reqwest::Url;
 use scraper::{ElementRef, Html, Selector};
 use version_compare::Cmp;
+
+const TARGET_SOFTWARE_DESCRIPTION: &str = "CDK Drive 3rd Party Managed Assemblies 96.x";
 
 #[derive(Debug)]
 struct AppConfig {
@@ -63,6 +67,52 @@ fn main() -> Result<()> {
     let catalog = fetch_software_catalog(&config.version_source_url)?;
     log::info!("Parsed {} software entries from OSD HTML", catalog.len());
     log_catalog_table(&catalog);
+
+    let installed = installed::get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()?;
+    match installed {
+        Some(ref product) => {
+            log::info!(
+                "Installed target software version | description={} | product_name={} | version={}",
+                TARGET_SOFTWARE_DESCRIPTION,
+                product.product_name,
+                product.version
+            );
+
+            match compare_software_version(&catalog, TARGET_SOFTWARE_DESCRIPTION, &product.version) {
+                Some(result) => log::info!(
+                    "OSD comparison | description={} | installed_version={} | osd_version={} | state={} | download_link={}",
+                    result.description,
+                    product.version,
+                    result.version,
+                    version_state_as_str(&result.state),
+                    result.download_link
+                ),
+                None => log::warn!(
+                    "OSD comparison skipped: target software '{}' not found on page",
+                    TARGET_SOFTWARE_DESCRIPTION
+                ),
+            }
+        }
+        None => {
+            if let Some(entry) = get_software_by_description(&catalog, TARGET_SOFTWARE_DESCRIPTION) {
+                log::warn!(
+                    "Target software not installed | description={} | osd_version={} | download_link={}",
+                    TARGET_SOFTWARE_DESCRIPTION,
+                    if entry.file_version.is_empty() {
+                        &entry.version_number
+                    } else {
+                        &entry.file_version
+                    },
+                    entry.download_link
+                );
+            } else {
+                log::warn!(
+                    "Target software not installed and not found on OSD page | description={}",
+                    TARGET_SOFTWARE_DESCRIPTION
+                );
+            }
+        }
+    }
 
     Ok(())
 }
@@ -222,7 +272,6 @@ fn resolve_link(base_url: &Url, href: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
 fn get_software_by_description<'a>(
     entries: &'a [SoftwareEntry],
     description: &str,
@@ -232,7 +281,6 @@ fn get_software_by_description<'a>(
         .find(|entry| entry.description.eq_ignore_ascii_case(description))
 }
 
-#[allow(dead_code)]
 fn compare_software_version(
     entries: &[SoftwareEntry],
     description: &str,
@@ -270,12 +318,11 @@ fn compare_versions(provided: &str, target: &str) -> Ordering {
     }
 }
 
-#[allow(dead_code)]
 fn version_state_as_str(state: &VersionState) -> &'static str {
     match state {
-        VersionState::NeedsUpdate => "needs update",
-        VersionState::Newer => "newer",
-        VersionState::Same => "same",
+        VersionState::NeedsUpdate => "Older (Web is newer)",
+        VersionState::Newer => "Newer (Installed is newer)",
+        VersionState::Same => "Same",
     }
 }
 
@@ -303,94 +350,8 @@ fn escape_pipes(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const SAMPLE_HTML: &str = r#"
-        <html>
-            <body>
-                <div class="category">Express Installers</div>
-                <table id="express">
-                    <tr>
-                        <th class="desc">Description</th>
-                        <th class="fversion">Installer Version</th>
-                        <th class="dlink">Link</th>
-                    </tr>
-                    <tr>
-                        <td>CDK Drive Express Installer</td>
-                        <td>2.20.0</td>
-                        <td class="dlink"><a href="express/WSPCP_EXP_INS/index.php">Link</a></td>
-                    </tr>
-                </table>
-
-                <div class="category">CDK Drive Core Software</div>
-                <table class="osdTable">
-                    <tr>
-                        <th class="desc">Description</th>
-                        <th class="fversion">File Version</th>
-                        <th class="fsize">File Size</th>
-                        <th class="args">Silent Install Arguments</th>
-                        <th class="dlink">Download</th>
-                    </tr>
-                    <tr>
-                        <td>CDK Init</td>
-                        <td>1.7.0.0</td>
-                        <td>1818624</td>
-                        <td>ALLUSERS=1 /quiet /norestart</td>
-                        <td class="dlink"><a href="https://example.com/CDKInitSetup_x64.msi">Download</a></td>
-                    </tr>
-                </table>
-            </body>
-        </html>
-        "#;
-
-    #[test]
-    fn parses_catalog_entries_from_category_tables() {
-        let base_url = Url::parse("https://servdemo.cdk.com/apps/autoTools/cds/osd/osd.php")
-            .expect("valid base url");
-        let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
-
-        assert_eq!(entries.len(), 2);
-
-        let express = get_software_by_description(&entries, "CDK Drive Express Installer")
-            .expect("express installer entry exists");
-        assert_eq!(express.category, "Express Installers");
-        assert_eq!(express.version_number, "2.20.0");
-        assert_eq!(express.file_version, "");
-        assert_eq!(
-            express.download_link,
-            "https://servdemo.cdk.com/apps/autoTools/cds/osd/express/WSPCP_EXP_INS/index.php"
-        );
-
-        let core = get_software_by_description(&entries, "CDK Init").expect("core entry exists");
-        assert_eq!(core.category, "CDK Drive Core Software");
-        assert_eq!(core.version_number, "1.7.0.0");
-        assert_eq!(core.file_version, "1.7.0.0");
-        assert_eq!(
-            core.silent_install_arguments,
-            "ALLUSERS=1 /quiet /norestart"
-        );
-    }
-
-    #[test]
-    fn compares_software_version_states() {
-        let base_url = Url::parse("https://servdemo.cdk.com/apps/autoTools/cds/osd/osd.php")
-            .expect("valid base url");
-        let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
-
-        let needs_update = compare_software_version(&entries, "CDK Init", "1.6.0.0")
-            .expect("comparison result exists");
-        assert!(matches!(needs_update.state, VersionState::NeedsUpdate));
-
-        let same = compare_software_version(&entries, "CDK Init", "1.7.0.0")
-            .expect("comparison result exists");
-        assert!(matches!(same.state, VersionState::Same));
-
-        let newer = compare_software_version(&entries, "CDK Init", "1.8.0.0")
-            .expect("comparison result exists");
-        assert!(matches!(newer.state, VersionState::Newer));
-    }
-}
+#[path = "tests/main_tests.rs"]
+mod tests;
 
 fn init_logging() -> Result<PathBuf> {
     let timestamp = build_timestamp(Local::now());
