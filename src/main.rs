@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 mod installed;
+mod cdk_info;
 
 use anyhow::{Context, Result};
 use chrono::{Local, Timelike};
@@ -111,6 +112,10 @@ fn main() -> Result<()> {
     log::info!("Log file: {}", log_file_path.display());
     log::info!("Mode: {}", match mode { AppMode::Query => "query", AppMode::Update => "update" });
     log::info!("Version source URL: {}", config.version_source_url);
+
+    //=-- Gather and display current CDK installation state before processing targets.
+    let cdk_info = cdk_info::gather();
+    cdk_info::log_summary(&cdk_info);
 
     let catalog = fetch_software_catalog(&config.version_source_url)?;
     log::info!("Parsed {} software entries from OSD HTML", catalog.len());
