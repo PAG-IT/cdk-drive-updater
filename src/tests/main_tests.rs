@@ -40,6 +40,13 @@ const SAMPLE_HTML: &str = r#"
                         <td>/silent</td>
                         <td class="dlink"><a href="terminal/bluezone/index.php">Download</a></td>
                     </tr>
+                    <tr>
+                        <td>CDK Drive WebStart</td>
+                        <td>7.4.2.19</td>
+                        <td>1818624</td>
+                        <td>/quiet /norestart</td>
+                        <td class="dlink"><a href="webstart/CDKDriveWebStartSetup.msi">Download</a></td>
+                    </tr>
                 </table>
             </body>
         </html>
@@ -51,7 +58,7 @@ fn parses_catalog_entries_from_category_tables() {
         .expect("valid base url");
     let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
 
-    assert_eq!(entries.len(), 3);
+    assert_eq!(entries.len(), 4);
 
     let express = get_software_by_description(&entries, "CDK Drive Express Installer")
         .expect("express installer entry exists");
@@ -78,6 +85,14 @@ fn parses_catalog_entries_from_category_tables() {
     assert_eq!(
         terminal.download_link,
         "https://servdemo.cdk.com/apps/autoTools/cds/osd/terminal/bluezone/index.php"
+    );
+
+    let webstart = get_software_by_description(&entries, "CDK Drive WebStart")
+        .expect("webstart entry exists");
+    assert_eq!(webstart.file_version, "7.4.2.19");
+    assert_eq!(
+        webstart.download_link,
+        "https://servdemo.cdk.com/apps/autoTools/cds/osd/webstart/CDKDriveWebStartSetup.msi"
     );
 }
 
@@ -111,6 +126,21 @@ fn compares_bluezone_using_osd_alias_description() {
     assert!(matches!(needs_update.state, VersionState::NeedsUpdate));
 
     let same = compare_software_version(&entries, "CDK Terminal Emulator", "6.2.1.23")
+        .expect("comparison result exists");
+    assert!(matches!(same.state, VersionState::Same));
+}
+
+#[test]
+fn compares_webstart_using_osd_description() {
+    let base_url = Url::parse("https://servdemo.cdk.com/apps/autoTools/cds/osd/osd.php")
+        .expect("valid base url");
+    let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
+
+    let needs_update = compare_software_version(&entries, "CDK Drive WebStart", "7.4.2.10")
+        .expect("comparison result exists");
+    assert!(matches!(needs_update.state, VersionState::NeedsUpdate));
+
+    let same = compare_software_version(&entries, "CDK Drive WebStart", "7.4.2.19")
         .expect("comparison result exists");
     assert!(matches!(same.state, VersionState::Same));
 }
