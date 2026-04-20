@@ -15,19 +15,24 @@ use version_compare::Cmp;
 struct TargetSoftware {
     installed_name: &'static str,
     osd_description: &'static str,
-    detect_installed: fn() -> Result<Option<installed::InstalledProduct>>,
+    detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>,
 }
 
-const TARGET_SOFTWARES: [TargetSoftware; 2] = [
+const TARGET_SOFTWARES: [TargetSoftware; 3] = [
     TargetSoftware {
         installed_name: "CDK Drive 3rd Party Managed Assemblies 96.x",
         osd_description: "CDK Drive 3rd Party Managed Assemblies 96.x",
-        detect_installed: installed::get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version,
+        detect_installed: installed::detect_cdk_drive_3rd_party_managed_assemblies_96x,
     },
     TargetSoftware {
         installed_name: "BlueZone",
         osd_description: "CDK Terminal Emulator",
-        detect_installed: installed::get_bluezone_installed_version,
+        detect_installed: installed::detect_bluezone,
+    },
+    TargetSoftware {
+        installed_name: "CDK Drive WebStart",
+        osd_description: "CDK Drive WebStart",
+        detect_installed: installed::get_webstart_installed_version_from_cdk_info,
     },
 ];
 
@@ -122,14 +127,19 @@ fn main() -> Result<()> {
     log_catalog_table(&catalog);
 
     for target in TARGET_SOFTWARES {
-        process_target(&catalog, mode.clone(), &target)?;
+        process_target(&catalog, mode.clone(), &target, &cdk_info)?;
     }
 
     Ok(())
 }
 
-fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware) -> Result<()> {
-    let installed = (target.detect_installed)()?;
+fn process_target(
+    entries: &[SoftwareEntry],
+    mode: AppMode,
+    target: &TargetSoftware,
+    cdk_info: &cdk_info::CdkInfo,
+) -> Result<()> {
+    let installed = (target.detect_installed)(cdk_info)?;
     match installed {
         Some(ref product) => {
             log::info!(
