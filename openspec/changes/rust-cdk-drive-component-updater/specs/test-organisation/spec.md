@@ -18,9 +18,9 @@ mod tests;
 
 ### Examples
 
-| Module source file    | Test file                       | Declaration in source              |
-|-----------------------|---------------------------------|------------------------------------|
-| `src/main.rs`         | `src/tests/main_tests.rs`       | `#[path = "tests/main_tests.rs"]`  |
+| Module source file    | Test file                       | Declaration in source                    |
+|-----------------------|---------------------------------|------------------------------------------|
+| `src/main.rs`         | `src/tests/main_tests.rs`       | `#[path = "tests/main_tests.rs"]`        |
 | `src/installed.rs`    | `src/tests/installed_tests.rs`  | `#[path = "tests/installed_tests.rs"]`   |
 
 ## Inside the Test File
