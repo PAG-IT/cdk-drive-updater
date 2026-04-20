@@ -141,22 +141,6 @@ pub fn gather() -> CdkInfo {
     }
 }
 
-/// Logs a formatted table summary of the gathered CDK info.
-pub fn log_summary(info: &CdkInfo) {
-    log::info!("CDK Installation Info:");
-    log::info!("| Check                      | Result                                     |");
-    log::info!("|----------------------------|--------------------------------------------|");
-    log::info!("| ADP (wsvc 4.5)             | {:<42} |", escape_pipes(&info.adp_check.to_string()));
-    log::info!("| WebStart URL Protocol      | {:<42} |", escape_pipes(&info.webstart_url_check.to_string()));
-    log::info!("| WebStart Shell Command     | {:<42} |", escape_pipes(&info.webstart_shell_var));
-    log::info!("| UnifyDriveEnabler          | {:<42} |", escape_pipes(&info.unify_drive_enabler_check.to_string()));
-    log::info!("| Adaptiva Client            | {:<42} |", escape_pipes(&info.adaptiva_check.to_string()));
-    log::info!("| SIA Directory              | {:<42} |", escape_pipes(&info.sia_check.to_string()));
-    log::info!("| SIA Win10 XML              | {:<42} |", escape_pipes(&info.sia_xml_check.to_string()));
-    log::info!("| SIA Fix Script             | {:<42} |", escape_pipes(&info.sia_fix_check.to_string()));
-    log::info!("| WebStart Version           | {:<42} |", escape_pipes(&info.webstart_version));
-}
-
 /// Checks whether `value_name` exists as a named value under `subkey` within
 /// `hive`.
 ///
@@ -210,6 +194,3 @@ fn path_check(path: &str) -> PathCheckStatus {
     }
 }
 
-fn escape_pipes(value: &str) -> String {
-    value.replace('|', "\\|")
-}
