@@ -17,6 +17,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 use winreg::RegKey;
 use winreg::enums::*;
 
+use crate::cdk_info::CdkInfo;
+
 /// A single installed MSI product entry returned from the registry.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -63,6 +65,36 @@ pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>> {
     }
 
     Ok(select_highest_version(matches))
+}
+
+/// Adapter used by target processing: ignores `cdk_info` and resolves version
+/// directly from installed MSI products.
+pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(
+    _cdk_info: &CdkInfo,
+) -> Result<Option<InstalledProduct>> {
+    get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()
+}
+
+/// Adapter used by target processing: ignores `cdk_info` and resolves version
+/// directly from BlueZone executables.
+pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
+    get_bluezone_installed_version()
+}
+
+/// Returns WebStart version using the cached CDK info snapshot instead of a
+/// fresh filesystem query.
+pub fn get_webstart_installed_version_from_cdk_info(
+    cdk_info: &CdkInfo,
+) -> Result<Option<InstalledProduct>> {
+    let version = cdk_info.webstart_version.trim();
+    if version.is_empty() || version.eq_ignore_ascii_case("NotFound") {
+        return Ok(None);
+    }
+
+    Ok(Some(InstalledProduct {
+        product_name: "CDK Drive WebStart".to_string(),
+        version: version.to_string(),
+    }))
 }
 
 /// Searches `HKEY_CLASSES_ROOT\Installer\Products` for all installed MSI
