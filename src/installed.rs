@@ -162,7 +162,7 @@ fn candidate_program_files_roots() -> Vec<PathBuf> {
     roots
 }
 
-fn read_executable_file_version(path: &Path) -> Result<Option<String>> {
+pub(crate) fn read_executable_file_version(path: &Path) -> Result<Option<String>> {
     let wide_path = to_wide(path.as_os_str());
 
     let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut()) };
