@@ -11,7 +11,24 @@ use reqwest::Url;
 use scraper::{ElementRef, Html, Selector};
 use version_compare::Cmp;
 
-const TARGET_SOFTWARE_DESCRIPTION: &str = "CDK Drive 3rd Party Managed Assemblies 96.x";
+struct TargetSoftware {
+    installed_name: &'static str,
+    osd_description: &'static str,
+    detect_installed: fn() -> Result<Option<installed::InstalledProduct>>,
+}
+
+const TARGET_SOFTWARES: [TargetSoftware; 2] = [
+    TargetSoftware {
+        installed_name: "CDK Drive 3rd Party Managed Assemblies 96.x",
+        osd_description: "CDK Drive 3rd Party Managed Assemblies 96.x",
+        detect_installed: installed::get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version,
+    },
+    TargetSoftware {
+        installed_name: "BlueZone",
+        osd_description: "CDK Terminal Emulator",
+        detect_installed: installed::get_bluezone_installed_version,
+    },
+];
 
 #[derive(Debug, Clone, PartialEq)]
 enum AppMode {
@@ -99,20 +116,30 @@ fn main() -> Result<()> {
     log::info!("Parsed {} software entries from OSD HTML", catalog.len());
     log_catalog_table(&catalog);
 
-    let installed = installed::get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()?;
+    for target in TARGET_SOFTWARES {
+        process_target(&catalog, mode.clone(), &target)?;
+    }
+
+    Ok(())
+}
+
+fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware) -> Result<()> {
+    let installed = (target.detect_installed)()?;
     match installed {
         Some(ref product) => {
             log::info!(
-                "Installed target software version | description={} | product_name={} | version={}",
-                TARGET_SOFTWARE_DESCRIPTION,
+                "Installed target software version | target={} | description={} | product_name={} | version={}",
+                target.installed_name,
+                target.osd_description,
                 product.product_name,
                 product.version
             );
 
-            match compare_software_version(&catalog, TARGET_SOFTWARE_DESCRIPTION, &product.version) {
+            match compare_software_version(entries, target.osd_description, &product.version) {
                 Some(result) => {
                     log::info!(
-                        "OSD comparison | description={} | installed_version={} | osd_version={} | state={} | download_link={}",
+                        "OSD comparison | target={} | description={} | installed_version={} | osd_version={} | state={} | download_link={}",
+                        target.installed_name,
                         result.description,
                         product.version,
                         result.version,
@@ -123,14 +150,16 @@ fn main() -> Result<()> {
                     if mode == AppMode::Update {
                         if matches!(result.state, VersionState::NeedsUpdate) {
                             log::info!(
-                                "Update mode: update required | description={} | download_link={}",
+                                "Update mode: update required | target={} | description={} | download_link={}",
+                                target.installed_name,
                                 result.description,
                                 result.download_link
                             );
                             //=-- Placeholder: download and silent-install logic goes here.
                         } else {
                             log::info!(
-                                "Update mode: no update required | description={} | state={}",
+                                "Update mode: no update required | target={} | description={} | state={}",
+                                target.installed_name,
                                 result.description,
                                 version_state_as_str(&result.state)
                             );
@@ -139,15 +168,16 @@ fn main() -> Result<()> {
                 }
                 None => log::warn!(
                     "OSD comparison skipped: target software '{}' not found on page",
-                    TARGET_SOFTWARE_DESCRIPTION
+                    target.osd_description
                 ),
             }
         }
         None => {
-            if let Some(entry) = get_software_by_description(&catalog, TARGET_SOFTWARE_DESCRIPTION) {
+            if let Some(entry) = get_software_by_description(entries, target.osd_description) {
                 log::warn!(
-                    "Target software not installed | description={} | osd_version={} | download_link={}",
-                    TARGET_SOFTWARE_DESCRIPTION,
+                    "Target software not installed | target={} | description={} | osd_version={} | download_link={}",
+                    target.installed_name,
+                    target.osd_description,
                     if entry.file_version.is_empty() {
                         &entry.version_number
                     } else {
@@ -158,16 +188,18 @@ fn main() -> Result<()> {
 
                 if mode == AppMode::Update {
                     log::info!(
-                        "Update mode: software not installed, install required | description={} | download_link={}",
-                        TARGET_SOFTWARE_DESCRIPTION,
+                        "Update mode: software not installed, install required | target={} | description={} | download_link={}",
+                        target.installed_name,
+                        target.osd_description,
                         entry.download_link
                     );
                     //=-- Placeholder: download and silent-install logic goes here.
                 }
             } else {
                 log::warn!(
-                    "Target software not installed and not found on OSD page | description={}",
-                    TARGET_SOFTWARE_DESCRIPTION
+                    "Target software not installed and not found on OSD page | target={} | description={}",
+                    target.installed_name,
+                    target.osd_description
                 );
             }
         }

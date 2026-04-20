@@ -99,6 +99,8 @@ dependencies = [
  "reqwest",
  "scraper",
  "version-compare",
+ "walkdir",
+ "windows-sys 0.61.2",
  "winreg",
 ]
 

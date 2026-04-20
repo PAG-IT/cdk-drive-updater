@@ -1,4 +1,5 @@
 use super::*;
+use windows_sys::Win32::Storage::FileSystem::VS_FIXEDFILEINFO;
 
 #[test]
 fn decodes_msi_version_from_product_name() {
@@ -34,4 +35,47 @@ fn extract_version_from_name_finds_embedded_version() {
 #[test]
 fn extract_version_from_name_returns_none_when_absent() {
     assert_eq!(extract_version_from_name("CDK Drive WebStart"), None);
+}
+
+#[test]
+fn format_fixed_file_version_expands_all_four_parts() {
+    let version_info = VS_FIXEDFILEINFO {
+        dwSignature: 0,
+        dwStrucVersion: 0,
+        dwFileVersionMS: (6 << 16) | 2,
+        dwFileVersionLS: (14 << 16) | 321,
+        dwProductVersionMS: 0,
+        dwProductVersionLS: 0,
+        dwFileFlagsMask: 0,
+        dwFileFlags: 0,
+        dwFileOS: 0,
+        dwFileType: 0,
+        dwFileSubtype: 0,
+        dwFileDateMS: 0,
+        dwFileDateLS: 0,
+    };
+
+    assert_eq!(format_fixed_file_version(&version_info), "6.2.14.321");
+}
+
+#[test]
+fn select_highest_version_returns_newest_match() {
+    let matches = vec![
+        InstalledProduct {
+            product_name: "BlueZone 6.1".to_string(),
+            version: "6.1.99.1".to_string(),
+        },
+        InstalledProduct {
+            product_name: "BlueZone 6.2".to_string(),
+            version: "6.2.1.15".to_string(),
+        },
+        InstalledProduct {
+            product_name: "BlueZone 6.2 Hotfix".to_string(),
+            version: "6.2.1.23".to_string(),
+        },
+    ];
+
+    let selected = select_highest_version(matches).expect("highest version selected");
+    assert_eq!(selected.product_name, "BlueZone 6.2 Hotfix");
+    assert_eq!(selected.version, "6.2.1.23");
 }

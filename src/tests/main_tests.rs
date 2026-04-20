@@ -33,6 +33,13 @@ const SAMPLE_HTML: &str = r#"
                         <td>ALLUSERS=1 /quiet /norestart</td>
                         <td class="dlink"><a href="https://example.com/CDKInitSetup_x64.msi">Download</a></td>
                     </tr>
+                    <tr>
+                        <td>CDK Terminal Emulator</td>
+                        <td>6.2.1.23</td>
+                        <td>1818624</td>
+                        <td>/silent</td>
+                        <td class="dlink"><a href="terminal/bluezone/index.php">Download</a></td>
+                    </tr>
                 </table>
             </body>
         </html>
@@ -44,7 +51,7 @@ fn parses_catalog_entries_from_category_tables() {
         .expect("valid base url");
     let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
 
-    assert_eq!(entries.len(), 2);
+    assert_eq!(entries.len(), 3);
 
     let express = get_software_by_description(&entries, "CDK Drive Express Installer")
         .expect("express installer entry exists");
@@ -63,6 +70,14 @@ fn parses_catalog_entries_from_category_tables() {
     assert_eq!(
         core.silent_install_arguments,
         "ALLUSERS=1 /quiet /norestart"
+    );
+
+    let terminal = get_software_by_description(&entries, "CDK Terminal Emulator")
+        .expect("terminal emulator entry exists");
+    assert_eq!(terminal.file_version, "6.2.1.23");
+    assert_eq!(
+        terminal.download_link,
+        "https://servdemo.cdk.com/apps/autoTools/cds/osd/terminal/bluezone/index.php"
     );
 }
 
@@ -83,4 +98,19 @@ fn compares_software_version_states() {
     let newer = compare_software_version(&entries, "CDK Init", "1.8.0.0")
         .expect("comparison result exists");
     assert!(matches!(newer.state, VersionState::Newer));
+}
+
+#[test]
+fn compares_bluezone_using_osd_alias_description() {
+    let base_url = Url::parse("https://servdemo.cdk.com/apps/autoTools/cds/osd/osd.php")
+        .expect("valid base url");
+    let entries = parse_software_catalog(SAMPLE_HTML, &base_url).expect("catalog should parse");
+
+    let needs_update = compare_software_version(&entries, "CDK Terminal Emulator", "6.2.1.10")
+        .expect("comparison result exists");
+    assert!(matches!(needs_update.state, VersionState::NeedsUpdate));
+
+    let same = compare_software_version(&entries, "CDK Terminal Emulator", "6.2.1.23")
+        .expect("comparison result exists");
+    assert!(matches!(same.state, VersionState::Same));
 }

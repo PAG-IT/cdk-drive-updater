@@ -4,8 +4,16 @@
 //! logic from the PowerShell reference script.
 
 use std::cmp::Ordering;
+use std::env;
+use std::ffi::{OsStr, c_void};
+use std::io;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
+use walkdir::WalkDir;
+use windows_sys::Win32::Storage::FileSystem::{
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, VS_FIXEDFILEINFO, VerQueryValueW,
+};
 use winreg::RegKey;
 use winreg::enums::*;
 
@@ -19,6 +27,7 @@ pub struct InstalledProduct {
 
 pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
     "CDK Drive 3rd Party Managed Assemblies";
+pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 
 /// Returns the newest installed version for
 /// `CDK Drive 3rd Party Managed Assemblies 96.x` from MSI product registry
@@ -26,6 +35,34 @@ pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
 pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version(
 ) -> Result<Option<InstalledProduct>> {
     get_installed_version(CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN)
+}
+
+/// Returns the newest installed BlueZone terminal emulator version found under
+/// the available Program Files roots.
+pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>> {
+    let mut matches = Vec::new();
+
+    for executable_path in find_bluezone_executables() {
+        let version = match read_executable_file_version(&executable_path) {
+            Ok(Some(version)) => version,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!(
+                    "Skipping BlueZone executable without readable version | path={} | error={}",
+                    executable_path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+
+        matches.push(InstalledProduct {
+            product_name: executable_path.display().to_string(),
+            version,
+        });
+    }
+
+    Ok(select_highest_version(matches))
 }
 
 /// Searches `HKEY_CLASSES_ROOT\Installer\Products` for all installed MSI
@@ -64,10 +101,125 @@ pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProd
         });
     }
 
+    Ok(select_highest_version(matches))
+}
+
+fn find_bluezone_executables() -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+
+    for root in candidate_program_files_roots() {
+        let bluezone_root = root.join("BlueZone");
+        if !bluezone_root.is_dir() {
+            continue;
+        }
+
+        for entry in WalkDir::new(&bluezone_root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|entry| entry.ok())
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(BLUEZONE_EXECUTABLE_NAME)
+            {
+                matches.push(entry.into_path());
+            }
+        }
+    }
+
+    matches.sort();
+    matches.dedup();
+    matches
+}
+
+fn candidate_program_files_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+
+    for variable in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        let Ok(value) = env::var(variable) else {
+            continue;
+        };
+
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        roots.push(PathBuf::from(trimmed));
+    }
+
+    for fallback in [r"C:\Program Files", r"C:\Program Files (x86)"] {
+        roots.push(PathBuf::from(fallback));
+    }
+
+    roots.sort();
+    roots.dedup();
+    roots
+}
+
+fn read_executable_file_version(path: &Path) -> Result<Option<String>> {
+    let wide_path = to_wide(path.as_os_str());
+
+    let size = unsafe { GetFileVersionInfoSizeW(wide_path.as_ptr(), std::ptr::null_mut()) };
+    if size == 0 {
+        return Ok(None);
+    }
+
+    let mut buffer = vec![0u8; size as usize];
+    let ok = unsafe {
+        GetFileVersionInfoW(
+            wide_path.as_ptr(),
+            0,
+            size,
+            buffer.as_mut_ptr() as *mut c_void,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error())
+            .with_context(|| format!("failed to read version resource from {}", path.display()));
+    }
+
+    let mut value_ptr = std::ptr::null_mut();
+    let mut value_len = 0u32;
+    let root_block = to_wide(OsStr::new("\\"));
+    let ok = unsafe {
+        VerQueryValueW(
+            buffer.as_ptr() as *const c_void,
+            root_block.as_ptr(),
+            &mut value_ptr,
+            &mut value_len,
+        )
+    };
+    if ok == 0 || value_len == 0 {
+        return Ok(None);
+    }
+
+    let version_info = unsafe { &*(value_ptr as *const VS_FIXEDFILEINFO) };
+    Ok(Some(format_fixed_file_version(version_info)))
+}
+
+fn to_wide(value: &OsStr) -> Vec<u16> {
+    value.to_string_lossy().encode_utf16().chain([0]).collect()
+}
+
+fn format_fixed_file_version(version_info: &VS_FIXEDFILEINFO) -> String {
+    let major = version_info.dwFileVersionMS >> 16;
+    let minor = version_info.dwFileVersionMS & 0xFFFF;
+    let build = version_info.dwFileVersionLS >> 16;
+    let revision = version_info.dwFileVersionLS & 0xFFFF;
+
+    format!("{}.{}.{}.{}", major, minor, build, revision)
+}
+
+fn select_highest_version(mut matches: Vec<InstalledProduct>) -> Option<InstalledProduct> {
     //=-- Sort descending so the highest version comes first.
     matches.sort_by(|a, b| compare_version_strings(&b.version, &a.version));
-
-    Ok(matches.into_iter().next())
+    matches.into_iter().next()
 }
 
 /// Decodes an MSI product version, preferring a version string embedded in
