@@ -13,6 +13,33 @@ use version_compare::Cmp;
 
 const TARGET_SOFTWARE_DESCRIPTION: &str = "CDK Drive 3rd Party Managed Assemblies 96.x";
 
+#[derive(Debug, Clone, PartialEq)]
+enum AppMode {
+    Query,
+    Update,
+}
+
+impl AppMode {
+    /// Parses the run mode from the provided CLI argument list.
+    ///
+    /// Accepts any casing of `/query`, `--query`, `-query`, `/update`, `--update`, or `-update`.
+    /// Defaults to [`AppMode::Query`] when no recognised flag is present.
+    fn from_args(args: &[String]) -> Self {
+        for arg in args {
+            let normalised = arg
+                .trim_start_matches('/')
+                .trim_start_matches('-')
+                .to_ascii_lowercase();
+            match normalised.as_str() {
+                "update" => return AppMode::Update,
+                "query" => return AppMode::Query,
+                _ => {}
+            }
+        }
+        AppMode::Query
+    }
+}
+
 #[derive(Debug)]
 struct AppConfig {
     version_source_url: String,
@@ -60,8 +87,12 @@ fn main() -> Result<()> {
     let log_file_path = init_logging()?;
     let config = AppConfig::from_env()?;
 
+    let args: Vec<String> = env::args().collect();
+    let mode = AppMode::from_args(&args[1..]);
+
     log::info!("CDK Drive updater started");
     log::info!("Log file: {}", log_file_path.display());
+    log::info!("Mode: {}", match mode { AppMode::Query => "query", AppMode::Update => "update" });
     log::info!("Version source URL: {}", config.version_source_url);
 
     let catalog = fetch_software_catalog(&config.version_source_url)?;
@@ -79,14 +110,33 @@ fn main() -> Result<()> {
             );
 
             match compare_software_version(&catalog, TARGET_SOFTWARE_DESCRIPTION, &product.version) {
-                Some(result) => log::info!(
-                    "OSD comparison | description={} | installed_version={} | osd_version={} | state={} | download_link={}",
-                    result.description,
-                    product.version,
-                    result.version,
-                    version_state_as_str(&result.state),
-                    result.download_link
-                ),
+                Some(result) => {
+                    log::info!(
+                        "OSD comparison | description={} | installed_version={} | osd_version={} | state={} | download_link={}",
+                        result.description,
+                        product.version,
+                        result.version,
+                        version_state_as_str(&result.state),
+                        result.download_link
+                    );
+
+                    if mode == AppMode::Update {
+                        if matches!(result.state, VersionState::NeedsUpdate) {
+                            log::info!(
+                                "Update mode: update required | description={} | download_link={}",
+                                result.description,
+                                result.download_link
+                            );
+                            //=-- Placeholder: download and silent-install logic goes here.
+                        } else {
+                            log::info!(
+                                "Update mode: no update required | description={} | state={}",
+                                result.description,
+                                version_state_as_str(&result.state)
+                            );
+                        }
+                    }
+                }
                 None => log::warn!(
                     "OSD comparison skipped: target software '{}' not found on page",
                     TARGET_SOFTWARE_DESCRIPTION
@@ -105,6 +155,15 @@ fn main() -> Result<()> {
                     },
                     entry.download_link
                 );
+
+                if mode == AppMode::Update {
+                    log::info!(
+                        "Update mode: software not installed, install required | description={} | download_link={}",
+                        TARGET_SOFTWARE_DESCRIPTION,
+                        entry.download_link
+                    );
+                    //=-- Placeholder: download and silent-install logic goes here.
+                }
             } else {
                 log::warn!(
                     "Target software not installed and not found on OSD page | description={}",
