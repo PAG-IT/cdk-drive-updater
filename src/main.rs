@@ -21,11 +21,16 @@ struct TargetSoftware {
     detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>,
 }
 
-const TARGET_SOFTWARES: [TargetSoftware; 3] = [
+const TARGET_SOFTWARES: [TargetSoftware; 4] = [
     TargetSoftware {
         installed_name: "CDK Drive 3rd Party Managed Assemblies 96.x",
         osd_description: "CDK Drive 3rd Party Managed Assemblies 96.x",
         detect_installed: installed::detect_cdk_drive_3rd_party_managed_assemblies_96x,
+    },
+    TargetSoftware {
+        installed_name: "Adaptiva",
+        osd_description: "Adaptiva",
+        detect_installed: installed::detect_adaptiva,
     },
     TargetSoftware {
         installed_name: "BlueZone",

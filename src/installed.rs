@@ -29,6 +29,7 @@ pub struct InstalledProduct {
 
 pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
     "CDK Drive 3rd Party Managed Assemblies";
+pub const ADAPTIVA_ADD_REMOVE_PATTERN: &str = "Adaptiva";
 pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 
 /// Returns the newest installed version for
@@ -37,6 +38,12 @@ pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version(
 ) -> Result<Option<InstalledProduct>> {
     get_installed_version(CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN)
+}
+
+/// Returns the newest installed Adaptiva version found in Add/Remove MSI
+/// product entries.
+pub fn get_adaptiva_installed_version() -> Result<Option<InstalledProduct>> {
+    get_installed_version(ADAPTIVA_ADD_REMOVE_PATTERN)
 }
 
 /// Returns the newest installed BlueZone terminal emulator version found under
@@ -73,6 +80,12 @@ pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(
     _cdk_info: &CdkInfo,
 ) -> Result<Option<InstalledProduct>> {
     get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()
+}
+
+/// Adapter used by target processing: ignores `cdk_info` and resolves version
+/// directly from Add/Remove MSI products.
+pub fn detect_adaptiva(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
+    get_adaptiva_installed_version()
 }
 
 /// Adapter used by target processing: ignores `cdk_info` and resolves version
