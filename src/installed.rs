@@ -31,6 +31,8 @@ pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
     "CDK Drive 3rd Party Managed Assemblies";
 pub const ADAPTIVA_ADD_REMOVE_PATTERN: &str = "Adaptiva";
 pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
+pub const ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH: &str =
+    r"Adaptiva\AdaptivaClient\bin\OneSiteClient.exe";
 
 /// Returns the newest installed version for
 /// `CDK Drive 3rd Party Managed Assemblies 96.x` from MSI product registry
@@ -43,7 +45,31 @@ pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version(
 /// Returns the newest installed Adaptiva version found in Add/Remove MSI
 /// product entries.
 pub fn get_adaptiva_installed_version() -> Result<Option<InstalledProduct>> {
-    get_installed_version(ADAPTIVA_ADD_REMOVE_PATTERN)
+    let add_remove_match = get_installed_version(ADAPTIVA_ADD_REMOVE_PATTERN)?;
+    let mut executable_matches = Vec::new();
+
+    for executable_path in find_adaptiva_executables() {
+        let version = match read_executable_file_version(&executable_path) {
+            Ok(Some(version)) => version,
+            Ok(None) => continue,
+            Err(error) => {
+                log::warn!(
+                    "Skipping Adaptiva executable without readable version | path={} | error= {}",
+                    executable_path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+
+        executable_matches.push(InstalledProduct {
+            product_name: executable_path.display().to_string(),
+            version,
+        });
+    }
+
+    let executable_match = select_highest_version(executable_matches);
+    Ok(executable_match.or(add_remove_match))
 }
 
 /// Returns the newest installed BlueZone terminal emulator version found under
@@ -174,6 +200,21 @@ fn find_bluezone_executables() -> Vec<PathBuf> {
             {
                 matches.push(entry.into_path());
             }
+        }
+    }
+
+    matches.sort();
+    matches.dedup();
+    matches
+}
+
+fn find_adaptiva_executables() -> Vec<PathBuf> {
+    let mut matches = Vec::new();
+
+    for root in candidate_program_files_roots() {
+        let executable_path = root.join(ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH);
+        if executable_path.is_file() {
+            matches.push(executable_path);
         }
     }
 
