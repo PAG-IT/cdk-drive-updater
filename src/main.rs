@@ -74,6 +74,7 @@ impl AppMode {
 #[derive(Debug)]
 struct AppConfig {
     version_source_url: String,
+    adaptiva_version_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +108,13 @@ impl AppConfig {
     fn from_env() -> Result<Self> {
         let version_source_url = env::var("CDK_DRIVE_OSD_URL")
             .context("missing env var CDK_DRIVE_OSD_URL")?;
+        let adaptiva_version_url = env::var("ADAPTIVA_VERSION_URL")
+            .unwrap_or_else(|_| "https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt".to_string());
 
-        Ok(Self { version_source_url })
+        Ok(Self {
+            version_source_url,
+            adaptiva_version_url,
+        })
     }
 }
 
@@ -132,6 +138,30 @@ fn main() -> Result<()> {
     app_logging::log_cdk_info_summary(&cdk_info);
 
     let catalog = fetch_software_catalog(&config.version_source_url)?;
+    let mut catalog = catalog;
+    let adaptiva_remote_version = fetch_adaptiva_version(&config.adaptiva_version_url)
+        .unwrap_or_else(|e| {
+            log::warn!("Failed to fetch remote Adaptiva version: {}", e);
+            None
+        });
+    app_logging::log_adaptiva_remote_version(&config.adaptiva_version_url, &adaptiva_remote_version);
+    if let Some(adaptiva_version) = adaptiva_remote_version {
+        let adaptiva_description = "CDK Software Install Agent ( Adaptiva )";
+        //=-- Search for existing Adaptiva entry in catalog and update it; if not found, append.
+        if let Some(entry) = catalog.iter_mut().find(|e| e.description == adaptiva_description) {
+            entry.version_number = adaptiva_version.clone();
+            entry.file_version = adaptiva_version;
+        } else {
+            catalog.push(SoftwareEntry {
+                category: "Adaptiva".to_string(),
+                description: adaptiva_description.to_string(),
+                version_number: adaptiva_version.clone(),
+                file_version: adaptiva_version,
+                silent_install_arguments: String::new(),
+                download_link: String::new(),
+            });
+        }
+    }
     app_logging::log_osd_catalog(&catalog);
 
     let mut comparison_rows = Vec::new();
@@ -230,6 +260,20 @@ fn process_target(
                 })
             }
         }
+    }
+}
+
+fn fetch_adaptiva_version(url: &str) -> Result<Option<String>> {
+    let response = reqwest::blocking::get(url)
+        .with_context(|| format!("failed to fetch Adaptiva version URL: {}", url))?;
+    let text = response
+        .text()
+        .context("failed to read Adaptiva version response")?;
+    let version = text.trim().to_string();
+    if version.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(version))
     }
 }
 
