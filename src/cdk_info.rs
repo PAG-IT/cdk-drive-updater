@@ -69,6 +69,18 @@ pub struct CdkInfo {
     pub unify_drive_enabler_check: RegistryCheckStatus,
     /// Adaptiva client `setup.status` registry value presence.
     pub adaptiva_check: RegistryCheckStatus,
+    /// `HKLM\SOFTWARE\CDK\Adaptiva` key presence.
+    pub adaptiva_cdk_key_check: RegistryCheckStatus,
+    /// `HKLM\SOFTWARE\WOW6432Node\CDK\Adaptiva` key presence.
+    pub adaptiva_cdk_key_wow_check: RegistryCheckStatus,
+    /// `setup.server_host_name` value in `HKLM\SOFTWARE\Adaptiva\client`.
+    pub adaptiva_server_host_name: String,
+    /// `setup.server_host_name` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
+    pub adaptiva_server_host_name_wow: String,
+    /// `server_locator.server_name` value in `HKLM\SOFTWARE\Adaptiva\client`.
+    pub adaptiva_server_locator_name: String,
+    /// `server_locator.server_name` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
+    pub adaptiva_server_locator_name_wow: String,
     /// CDK SIA directory presence (`C:\Program Files (x86)\CDK\sia`).
     pub sia_check: PathCheckStatus,
     /// CDK SIA win10 maintenance XML file presence.
@@ -114,6 +126,31 @@ pub fn gather() -> CdkInfo {
         "setup.status",
     );
 
+    let adaptiva_cdk_key_check = registry_key_check(&hklm, r"SOFTWARE\CDK\Adaptiva");
+    let adaptiva_cdk_key_wow_check =
+        registry_key_check(&hklm, r"SOFTWARE\WOW6432Node\CDK\Adaptiva");
+
+    let adaptiva_server_host_name = read_registry_string(
+        &hklm,
+        r"SOFTWARE\Adaptiva\client",
+        "setup.server_host_name",
+    );
+    let adaptiva_server_host_name_wow = read_registry_string(
+        &hklm,
+        r"SOFTWARE\WOW6432Node\Adaptiva\client",
+        "setup.server_host_name",
+    );
+    let adaptiva_server_locator_name = read_registry_string(
+        &hklm,
+        r"SOFTWARE\Adaptiva\client",
+        "server_locator.server_name",
+    );
+    let adaptiva_server_locator_name_wow = read_registry_string(
+        &hklm,
+        r"SOFTWARE\WOW6432Node\Adaptiva\client",
+        "server_locator.server_name",
+    );
+
     let sia_check = path_check(r"C:\Program Files (x86)\CDK\sia");
     let sia_xml_check = path_check(r"C:\Program Files (x86)\CDK\sia\cdk_sia_win10_maint.xml");
     let sia_fix_check = path_check(r"C:\Program Files (x86)\CDK\sia\w10_fix.vbs");
@@ -134,6 +171,12 @@ pub fn gather() -> CdkInfo {
         webstart_shell_var,
         unify_drive_enabler_check,
         adaptiva_check,
+        adaptiva_cdk_key_check,
+        adaptiva_cdk_key_wow_check,
+        adaptiva_server_host_name,
+        adaptiva_server_host_name_wow,
+        adaptiva_server_locator_name,
+        adaptiva_server_locator_name_wow,
         sia_check,
         sia_xml_check,
         sia_fix_check,
@@ -164,6 +207,31 @@ fn registry_value_check(hive: &RegKey, subkey: &str, value_name: &str) -> Regist
         RegistryCheckStatus::Found
     } else {
         RegistryCheckStatus::PathExists
+    }
+}
+
+/// Checks whether the registry key at `subkey` exists in `hive`.
+///
+/// Returns [`RegistryCheckStatus::Found`] when the key opens successfully, or
+/// [`RegistryCheckStatus::PathMissing`] when it cannot be opened.
+fn registry_key_check(hive: &RegKey, subkey: &str) -> RegistryCheckStatus {
+    match hive.open_subkey(subkey) {
+        Ok(_) => RegistryCheckStatus::Found,
+        Err(_) => RegistryCheckStatus::PathMissing,
+    }
+}
+
+/// Reads a named string value from `subkey` in `hive`.
+///
+/// Returns `"Not Found"` when the key or named value is absent.
+fn read_registry_string(hive: &RegKey, subkey: &str, value_name: &str) -> String {
+    let key = match hive.open_subkey(subkey) {
+        Ok(k) => k,
+        Err(_) => return "Not Found".to_string(),
+    };
+    match key.get_value::<String, _>(value_name) {
+        Ok(v) => v,
+        Err(_) => "Not Found".to_string(),
     }
 }
 
