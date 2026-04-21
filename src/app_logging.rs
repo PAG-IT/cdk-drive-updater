@@ -20,7 +20,7 @@ pub(crate) fn log_app_mode(mode: &str) {
     log::info!("\n");
     log::info!("========================================");
     log::info!("  Application Mode: {}", mode.to_uppercase());
-    log::info!("========================================\n");
+    log::info!("========================================");
 }
 
 pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str) {
@@ -155,7 +155,9 @@ pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry]) {
         &footer_rows,
     );
 
-    log::info!("{}", [core_table, detail_table, summary_table].join("\n\n"));
+    log::info!("{}", core_table);
+    log::info!("{}", detail_table);
+    log::info!("{}", summary_table);
 }
 
 pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
@@ -199,7 +201,8 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
         &detail_rows,
     );
 
-    log::info!("{}", [summary_table, detail_table].join("\n\n"));
+    log::info!("{}", summary_table);
+    log::info!("{}", detail_table);
 }
 
 fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String {
@@ -207,6 +210,7 @@ fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> Str
     let mut lines = Vec::new();
 
     lines.push(title.to_string());
+    lines.push(String::new());
     lines.push(build_separator(&widths));
     lines.push(build_ascii_row(
         &headers.iter().map(|value| (*value).to_string()).collect::<Vec<String>>(),
@@ -219,7 +223,7 @@ fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> Str
         lines.push(build_separator(&widths));
     }
 
-    lines.join("\n")
+    lines.join("\n") + "\n\n"
 }
 
 fn build_ascii_row(cells: &[String], widths: &[usize]) -> String {
