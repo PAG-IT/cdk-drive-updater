@@ -495,10 +495,16 @@ mod tests;
 
 fn init_logging() -> Result<PathBuf> {
     let timestamp = build_timestamp(Local::now());
-    let log_dir = PathBuf::from("logs");
+    let log_dir = env::var("LOG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("cdk-updater-logs")
+        });
     fs::create_dir_all(&log_dir).context("failed to create logs directory")?;
 
-    let log_file_path = log_dir.join(format!("{}.log", timestamp));
+    let log_file_path = log_dir.join(format!("cdk-drive-updater--{}.log", timestamp));
     let log_file = fern::log_file(&log_file_path).context("failed to create log file")?;
 
     fern::Dispatch::new()
