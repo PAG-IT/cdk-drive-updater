@@ -75,6 +75,25 @@ fn expand_key_value_rows(
     }
 }
 
+pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>) {
+    let rows = match version {
+        Some(v) => vec![
+            vec!["Source URL".to_string(), url.to_string()],
+            vec!["Remote Version".to_string(), v.clone()],
+        ],
+        None => vec![
+            vec!["Source URL".to_string(), url.to_string()],
+            vec!["Remote Version".to_string(), "(not found/empty)".to_string()],
+        ],
+    };
+
+    log::info!("{}", build_ascii_table(
+        "Adaptiva Remote Version",
+        &["Setting", "Value"],
+        &rows,
+    ));
+}
+
 pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry]) {
     let mut core_rows = Vec::new();
     let mut detail_rows = Vec::new();
