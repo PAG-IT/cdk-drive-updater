@@ -69,10 +69,14 @@ pub struct CdkInfo {
     pub unify_drive_enabler_check: RegistryCheckStatus,
     /// Adaptiva client `setup.status` registry value presence.
     pub adaptiva_check: RegistryCheckStatus,
-    /// `HKLM\SOFTWARE\CDK\Adaptiva` key presence.
-    pub adaptiva_cdk_key_check: RegistryCheckStatus,
-    /// `HKLM\SOFTWARE\WOW6432Node\CDK\Adaptiva` key presence.
-    pub adaptiva_cdk_key_wow_check: RegistryCheckStatus,
+    /// All named values from `HKLM\SOFTWARE\CDK\Adaptiva` and its subkeys.
+    ///
+    /// `None` when the key is absent; `Some(vec)` with `(name, data)` pairs otherwise.
+    pub adaptiva_cdk_key_values: Option<Vec<(String, String)>>,
+    /// All named values from `HKLM\SOFTWARE\WOW6432Node\CDK\Adaptiva` and its subkeys.
+    ///
+    /// `None` when the key is absent; `Some(vec)` with `(name, data)` pairs otherwise.
+    pub adaptiva_cdk_key_wow_values: Option<Vec<(String, String)>>,
     /// `setup.server_host_name` value in `HKLM\SOFTWARE\Adaptiva\client`.
     pub adaptiva_server_host_name: String,
     /// `setup.server_host_name` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
@@ -126,9 +130,9 @@ pub fn gather() -> CdkInfo {
         "setup.status",
     );
 
-    let adaptiva_cdk_key_check = registry_key_check(&hklm, r"SOFTWARE\CDK\Adaptiva");
-    let adaptiva_cdk_key_wow_check =
-        registry_key_check(&hklm, r"SOFTWARE\WOW6432Node\CDK\Adaptiva");
+    let adaptiva_cdk_key_values = read_key_values_recursive(&hklm, r"SOFTWARE\CDK\Adaptiva");
+    let adaptiva_cdk_key_wow_values =
+        read_key_values_recursive(&hklm, r"SOFTWARE\WOW6432Node\CDK\Adaptiva");
 
     let adaptiva_server_host_name = read_registry_string(
         &hklm,
@@ -171,8 +175,8 @@ pub fn gather() -> CdkInfo {
         webstart_shell_var,
         unify_drive_enabler_check,
         adaptiva_check,
-        adaptiva_cdk_key_check,
-        adaptiva_cdk_key_wow_check,
+        adaptiva_cdk_key_values,
+        adaptiva_cdk_key_wow_values,
         adaptiva_server_host_name,
         adaptiva_server_host_name_wow,
         adaptiva_server_locator_name,
@@ -210,14 +214,93 @@ fn registry_value_check(hive: &RegKey, subkey: &str, value_name: &str) -> Regist
     }
 }
 
-/// Checks whether the registry key at `subkey` exists in `hive`.
+/// Enumerates all named values in `subkey` and its descendant subkeys within
+/// `hive`, returning them as `(label, data)` pairs.
 ///
-/// Returns [`RegistryCheckStatus::Found`] when the key opens successfully, or
-/// [`RegistryCheckStatus::PathMissing`] when it cannot be opened.
-fn registry_key_check(hive: &RegKey, subkey: &str) -> RegistryCheckStatus {
-    match hive.open_subkey(subkey) {
-        Ok(_) => RegistryCheckStatus::Found,
-        Err(_) => RegistryCheckStatus::PathMissing,
+/// Returns `None` when the key cannot be opened.  The label for root values is
+/// the value name; for subkey values it is `"SubKey\\ValueName"`.
+fn read_key_values_recursive(hive: &RegKey, subkey: &str) -> Option<Vec<(String, String)>> {
+    let key = hive.open_subkey(subkey).ok()?;
+    let mut results = Vec::new();
+    collect_key_values(&key, "", &mut results);
+    Some(results)
+}
+
+fn collect_key_values(key: &RegKey, prefix: &str, out: &mut Vec<(String, String)>) {
+    //=-- Collect all named values on this key level.
+    for (name, value) in key.enum_values().filter_map(|r| r.ok()) {
+        let display_name = if name.is_empty() {
+            "(Default)".to_string()
+        } else {
+            name.clone()
+        };
+        let label = if prefix.is_empty() {
+            display_name
+        } else {
+            format!("{prefix}\\{display_name}")
+        };
+        out.push((label, format_reg_value(&value)));
+    }
+    //=-- Recurse into any subkeys.
+    for sub_name in key.enum_keys().filter_map(|r| r.ok()) {
+        if let Ok(sub_key) = key.open_subkey(&sub_name) {
+            let sub_prefix = if prefix.is_empty() {
+                sub_name.clone()
+            } else {
+                format!("{prefix}\\{sub_name}")
+            };
+            collect_key_values(&sub_key, &sub_prefix, out);
+        }
+    }
+}
+
+fn format_reg_value(value: &winreg::RegValue) -> String {
+    use winreg::enums::RegType;
+    match value.vtype {
+        RegType::REG_SZ | RegType::REG_EXPAND_SZ => {
+            let words: Vec<u16> = value
+                .bytes
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .take_while(|&w| w != 0)
+                .collect();
+            String::from_utf16_lossy(&words).to_string()
+        }
+        RegType::REG_DWORD => {
+            if value.bytes.len() >= 4 {
+                let arr: [u8; 4] = value.bytes[..4].try_into().unwrap_or([0; 4]);
+                u32::from_le_bytes(arr).to_string()
+            } else {
+                "(invalid DWORD)".to_string()
+            }
+        }
+        RegType::REG_QWORD => {
+            if value.bytes.len() >= 8 {
+                let arr: [u8; 8] = value.bytes[..8].try_into().unwrap_or([0; 8]);
+                u64::from_le_bytes(arr).to_string()
+            } else {
+                "(invalid QWORD)".to_string()
+            }
+        }
+        RegType::REG_MULTI_SZ => {
+            let words: Vec<u16> = value
+                .bytes
+                .chunks_exact(2)
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            words
+                .split(|&w| w == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf16_lossy(s).to_string())
+                .collect::<Vec<_>>()
+                .join(" | ")
+        }
+        _ => value
+            .bytes
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(" "),
     }
 }
 
