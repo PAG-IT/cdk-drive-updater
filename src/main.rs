@@ -29,7 +29,7 @@ const TARGET_SOFTWARES: [TargetSoftware; 4] = [
     },
     TargetSoftware {
         installed_name: "Adaptiva",
-        osd_description: "Adaptiva",
+        osd_description: "CDK Software Install Agent ( Adaptiva )",
         detect_installed: installed::detect_adaptiva,
     },
     TargetSoftware {
