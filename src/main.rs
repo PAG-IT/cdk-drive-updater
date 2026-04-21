@@ -127,6 +127,9 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     let mode = AppMode::from_args(&args[1..]);
 
+    //=-- Log the app mode prominently at the very start.
+    app_logging::log_app_mode(app_mode_as_str(&mode));
+
     app_logging::log_startup_summary(
         &log_file_path,
         app_mode_as_str(&mode),

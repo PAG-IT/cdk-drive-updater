@@ -15,6 +15,14 @@ pub(crate) struct TargetComparisonRow {
     pub note: String,
 }
 
+//=-- Logs the application mode prominently at startup.
+pub(crate) fn log_app_mode(mode: &str) {
+    log::info!("\n");
+    log::info!("========================================");
+    log::info!("  Application Mode: {}", mode.to_uppercase());
+    log::info!("========================================\n");
+}
+
 pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str) {
     let rows = vec![
         vec!["App".to_string(), "CDK Drive updater".to_string()],
