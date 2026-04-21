@@ -85,6 +85,14 @@ pub struct CdkInfo {
     pub adaptiva_server_locator_name: String,
     /// `server_locator.server_name` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
     pub adaptiva_server_locator_name_wow: String,
+    /// `setup.server_guid` value in `HKLM\SOFTWARE\Adaptiva\client`.
+    pub adaptiva_setup_guid: String,
+    /// `client_data_manager.server_guid` value in `HKLM\SOFTWARE\Adaptiva\client`.
+    pub adaptiva_client_data_manager_guid: String,
+    /// `setup.server_guid` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
+    pub adaptiva_setup_guid_wow: String,
+    /// `client_data_manager.server_guid` value in `HKLM\SOFTWARE\WOW6432Node\Adaptiva\client`.
+    pub adaptiva_client_data_manager_guid_wow: String,
     /// CDK SIA directory presence (`C:\Program Files (x86)\CDK\sia`).
     pub sia_check: PathCheckStatus,
     /// CDK SIA win10 maintenance XML file presence.
@@ -155,6 +163,27 @@ pub fn gather() -> CdkInfo {
         "server_locator.server_name",
     );
 
+    let adaptiva_setup_guid = read_registry_string(
+        &hklm,
+        r"SOFTWARE\Adaptiva\client",
+        "setup.server_guid",
+    );
+    let adaptiva_client_data_manager_guid = read_registry_string(
+        &hklm,
+        r"SOFTWARE\Adaptiva\client",
+        "client_data_manager.server_guid",
+    );
+    let adaptiva_setup_guid_wow = read_registry_string(
+        &hklm,
+        r"SOFTWARE\WOW6432Node\Adaptiva\client",
+        "setup.server_guid",
+    );
+    let adaptiva_client_data_manager_guid_wow = read_registry_string(
+        &hklm,
+        r"SOFTWARE\WOW6432Node\Adaptiva\client",
+        "client_data_manager.server_guid",
+    );
+
     let sia_check = path_check(r"C:\Program Files (x86)\CDK\sia");
     let sia_xml_check = path_check(r"C:\Program Files (x86)\CDK\sia\cdk_sia_win10_maint.xml");
     let sia_fix_check = path_check(r"C:\Program Files (x86)\CDK\sia\w10_fix.vbs");
@@ -181,6 +210,10 @@ pub fn gather() -> CdkInfo {
         adaptiva_server_host_name_wow,
         adaptiva_server_locator_name,
         adaptiva_server_locator_name_wow,
+        adaptiva_setup_guid,
+        adaptiva_client_data_manager_guid,
+        adaptiva_setup_guid_wow,
+        adaptiva_client_data_manager_guid_wow,
         sia_check,
         sia_xml_check,
         sia_fix_check,
