@@ -44,6 +44,10 @@ pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
     rows.push(vec!["Adaptiva Server Host (WOW6432Node)".to_string(), info.adaptiva_server_host_name_wow.clone()]);
     rows.push(vec!["Adaptiva Server Locator (Native)".to_string(), info.adaptiva_server_locator_name.clone()]);
     rows.push(vec!["Adaptiva Server Locator (WOW6432Node)".to_string(), info.adaptiva_server_locator_name_wow.clone()]);
+    rows.push(vec!["Adaptiva Setup GUID (Native)".to_string(), info.adaptiva_setup_guid.clone()]);
+    rows.push(vec!["Adaptiva Setup GUID (WOW6432Node)".to_string(), info.adaptiva_setup_guid_wow.clone()]);
+    rows.push(vec!["Adaptiva Client Data Manager GUID (Native)".to_string(), info.adaptiva_client_data_manager_guid.clone()]);
+    rows.push(vec!["Adaptiva Client Data Manager GUID (WOW6432Node)".to_string(), info.adaptiva_client_data_manager_guid_wow.clone()]);
     rows.push(vec!["SIA Directory".to_string(), info.sia_check.to_string()]);
     rows.push(vec!["SIA Win10 XML".to_string(), info.sia_xml_check.to_string()]);
     rows.push(vec!["SIA Fix Script".to_string(), info.sia_fix_check.to_string()]);
