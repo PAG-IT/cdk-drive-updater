@@ -12,6 +12,7 @@ pub(crate) struct TargetComparisonRow {
     pub state: String,
     pub action: String,
     pub download_link: String,
+    pub install_args: String,
     pub note: String,
 }
 
@@ -23,11 +24,12 @@ pub(crate) fn log_app_mode(mode: &str) {
     log::info!("========================================");
 }
 
-pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str) {
+pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str) {
     let rows = vec![
         vec!["App".to_string(), "CDK Drive updater".to_string()],
         vec!["Mode".to_string(), mode.to_string()],
         vec!["OSD URL".to_string(), version_source_url.to_string()],
+        vec!["Download Dir".to_string(), download_dir.to_string()],
         vec!["Log File".to_string(), log_file_path.display().to_string()],
     ];
 
@@ -178,6 +180,7 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
             row.target.clone(),
             row.osd_description.clone(),
             row.download_link.clone(),
+            row.install_args.clone(),
             row.note.clone(),
         ]);
     }
@@ -197,7 +200,7 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
 
     let detail_table = build_ascii_table(
         "Installed vs OSD Details",
-        &["Target", "OSD Description", "Download Link", "Note"],
+        &["Target", "OSD Description", "Download Link", "Install Args", "Note"],
         &detail_rows,
     );
 
