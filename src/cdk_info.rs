@@ -8,7 +8,7 @@ use std::path::Path;
 use winreg::RegKey;
 use winreg::enums::*;
 
-use crate::installed::read_executable_file_version;
+use crate::installed::{read_executable_file_version, get_webstart_add_remove_installed_version};
 
 /// Status returned by a registry key + named-value presence check.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +102,9 @@ pub struct CdkInfo {
     /// File version of `CDK Drive WebStart.exe`, or `"NotFound"` when the
     /// executable is absent.
     pub webstart_version: String,
+    /// Add/Remove Programs (MSI) version for `CDK Drive WebStart`, or `"NotFound"`
+    /// when not installed via MSI.
+    pub webstart_add_remove_version: String,
 }
 
 /// Gathers all CDK installation info from the local system.
@@ -198,6 +201,13 @@ pub fn gather() -> CdkInfo {
         }
     };
 
+    let webstart_add_remove_version = {
+        match get_webstart_add_remove_installed_version() {
+            Ok(Some(product)) => product.version,
+            _ => "NotFound".to_string(),
+        }
+    };
+
     CdkInfo {
         adp_check,
         webstart_url_check,
@@ -218,6 +228,7 @@ pub fn gather() -> CdkInfo {
         sia_xml_check,
         sia_fix_check,
         webstart_version,
+        webstart_add_remove_version,
     }
 }
 
