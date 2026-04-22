@@ -118,6 +118,7 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 | --- | --- | --- |
 | `CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN` | `CDK Drive 3rd Party Managed Assemblies` | Case-insensitive MSI product-name substring. |
 | `ADAPTIVA_ADD_REMOVE_PATTERN` | `Adaptiva` | Case-insensitive MSI product-name substring. |
+| `WEBSTART_ADD_REMOVE_PATTERN` | `CDKDriveWebStart` | Case-insensitive MSI product-name substring. |
 | `BLUEZONE_EXECUTABLE_NAME` | `bzvt.exe` | BlueZone executable filename searched under Program Files roots. |
 | `ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH` | `Adaptiva\AdaptivaClient\bin\OneSiteClient.exe` | Adaptiva executable relative to Program Files roots. |
 
@@ -128,10 +129,11 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 | `get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version` | `pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version() -> Result<Option<InstalledProduct>>` | Returns the newest matching MSI product version for CDK Drive 3rd Party Managed Assemblies. |
 | `get_adaptiva_installed_version` | `pub fn get_adaptiva_installed_version() -> Result<Option<InstalledProduct>>` | Returns the highest Adaptiva version found from executable metadata or Add/Remove MSI entries. |
 | `get_bluezone_installed_version` | `pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>>` | Returns the highest BlueZone version found from `bzvt.exe` metadata. |
+| `get_webstart_add_remove_installed_version` | `pub fn get_webstart_add_remove_installed_version() -> Result<Option<InstalledProduct>>` | Returns the newest WebStart version from Add/Remove MSI product registry entries. |
 | `detect_cdk_drive_3rd_party_managed_assemblies_96x` | `pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the MSI detector. |
 | `detect_adaptiva` | `pub fn detect_adaptiva(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the Adaptiva detector. |
 | `detect_bluezone` | `pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the BlueZone detector. |
-| `get_webstart_installed_version_from_cdk_info` | `pub fn get_webstart_installed_version_from_cdk_info(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Returns WebStart from `CdkInfo.webstart_version`, treating empty or `NotFound` as missing. |
+| `get_webstart_installed_version_from_cdk_info` | `pub fn get_webstart_installed_version_from_cdk_info(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Returns WebStart version from `CdkInfo`, preferring Add/Remove MSI version over executable file version. |
 | `get_installed_version` | `pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>>` | Scans `HKCR\Installer\Products` and returns the highest matching MSI version. |
 | `read_executable_file_version` | `pub(crate) fn read_executable_file_version(path: &Path) -> Result<Option<String>>` | Reads Windows fixed file-version metadata from an executable. |
 
@@ -194,6 +196,7 @@ Purpose: gather a single local snapshot of CDK-specific registry keys, Adaptiva 
 | `sia_xml_check` | `PathCheckStatus` | `C:\Program Files (x86)\CDK\sia\cdk_sia_win10_maint.xml`. |
 | `sia_fix_check` | `PathCheckStatus` | `C:\Program Files (x86)\CDK\sia\w10_fix.vbs`. |
 | `webstart_version` | `String` | File version of `CDK Drive WebStart.exe`, or `NotFound`. |
+| `webstart_add_remove_version` | `String` | Add/Remove Programs (MSI registry) version for `CDK Drive WebStart`, or `NotFound`. |
 
 ### Public Functions
 
