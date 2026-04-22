@@ -30,6 +30,7 @@ pub struct InstalledProduct {
 pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
     "CDK Drive 3rd Party Managed Assemblies";
 pub const ADAPTIVA_ADD_REMOVE_PATTERN: &str = "Adaptiva";
+pub const WEBSTART_ADD_REMOVE_PATTERN: &str = "CDKDriveWebStart";
 pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 pub const ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH: &str =
     r"Adaptiva\AdaptivaClient\bin\OneSiteClient.exe";
@@ -100,6 +101,12 @@ pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>> {
     Ok(select_highest_version(matches))
 }
 
+/// Returns the newest installed WebStart version from Add/Remove MSI product
+/// registry entries.
+pub fn get_webstart_add_remove_installed_version() -> Result<Option<InstalledProduct>> {
+    get_installed_version(WEBSTART_ADD_REMOVE_PATTERN)
+}
+
 /// Adapter used by target processing: ignores `cdk_info` and resolves version
 /// directly from installed MSI products.
 pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(
@@ -120,20 +127,30 @@ pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> 
     get_bluezone_installed_version()
 }
 
-/// Returns WebStart version using the cached CDK info snapshot instead of a
-/// fresh filesystem query.
+/// Returns WebStart version using the cached CDK info snapshot, preferring the
+/// Add/Remove MSI version over the executable file version when available.
 pub fn get_webstart_installed_version_from_cdk_info(
     cdk_info: &CdkInfo,
 ) -> Result<Option<InstalledProduct>> {
-    let version = cdk_info.webstart_version.trim();
-    if version.is_empty() || version.eq_ignore_ascii_case("NotFound") {
-        return Ok(None);
+    // Prefer Add/Remove version if available
+    let add_remove_version = cdk_info.webstart_add_remove_version.trim();
+    if !add_remove_version.is_empty() && !add_remove_version.eq_ignore_ascii_case("NotFound") {
+        return Ok(Some(InstalledProduct {
+            product_name: "CDK Drive WebStart".to_string(),
+            version: add_remove_version.to_string(),
+        }));
     }
 
-    Ok(Some(InstalledProduct {
-        product_name: "CDK Drive WebStart".to_string(),
-        version: version.to_string(),
-    }))
+    // Fall back to executable file version if Add/Remove version not found
+    let exe_version = cdk_info.webstart_version.trim();
+    if !exe_version.is_empty() && !exe_version.eq_ignore_ascii_case("NotFound") {
+        return Ok(Some(InstalledProduct {
+            product_name: "CDK Drive WebStart".to_string(),
+            version: exe_version.to_string(),
+        }));
+    }
+
+    Ok(None)
 }
 
 /// Searches `HKEY_CLASSES_ROOT\Installer\Products` for all installed MSI
