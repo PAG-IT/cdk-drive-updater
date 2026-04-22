@@ -61,7 +61,8 @@ pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
     rows.push(vec!["SIA Directory".to_string(), info.sia_check.to_string()]);
     rows.push(vec!["SIA Win10 XML".to_string(), info.sia_xml_check.to_string()]);
     rows.push(vec!["SIA Fix Script".to_string(), info.sia_fix_check.to_string()]);
-    rows.push(vec!["WebStart Version".to_string(), info.webstart_version.clone()]);
+    rows.push(vec!["WebStart Version (Executable)".to_string(), info.webstart_version.clone()]);
+    rows.push(vec!["WebStart Version (Add/Remove)".to_string(), info.webstart_add_remove_version.clone()]);
 
     log::info!("{}", build_ascii_table(
         "CDK Installation Info",
