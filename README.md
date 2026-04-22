@@ -27,13 +27,15 @@ package that is out-of-date.
 CDK Drive is a dealer-management platform that relies on several Windows
 software components.  Keeping those components at the correct version is
 normally a manual or Kaseya-scripted process.  This tool automates the
-detection and (eventually) the update step by:
+detection and update step by:
 
 1. Scraping the OSD HTML catalog to build a software version table.
 2. Reading the Windows registry and filesystem to determine what is currently
    installed.
 3. Comparing installed vs. available versions using semantic version ordering.
 4. Emitting a rich ASCII-table report to stdout **and** a timestamped log file.
+5. In **update** mode, downloading and silently installing any out-of-date or
+   missing packages (CDK 3rd Party Managed Assemblies, WebStart, BlueZone).
 
 ---
 
@@ -68,11 +70,19 @@ in the working directory is loaded automatically via `dotenvy`.
 | `CDK_DRIVE_OSD_URL` | **Yes** | — | Full URL of the CDK OSD HTML page that lists current software versions |
 | `ADAPTIVA_VERSION_URL` | No | `https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt` | URL of a plain-text file containing the current Adaptiva version string |
 | `LOG_DIR` | No | `./cdk-updater-logs` (relative to cwd) | Directory where timestamped log files are written |
+| `DOWNLOAD_DIR` | No | `./cdk-updater-downloads` (relative to cwd) | Directory where installer files are saved during update mode; deleted after each install |
+| `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive 3rd Party Managed Assemblies 96.x |
+| `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive WebStart |
+| `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK BlueZone (Terminal Emulator) |
 
 ### .env example
 
 ```env
 CDK_DRIVE_OSD_URL=https://your-cdk-server/apps/autoTools/cds/osd/osd.php
+DOWNLOAD_DIR=C:\Temp\cdk-downloads
+CDK_3RD_PARTY_INSTALL_ARGS=
+CDK_WEBSTART_INSTALL_ARGS=
+CDK_BLUEZONE_INSTALL_ARGS=
 ```
 
 ---
@@ -85,9 +95,9 @@ cdk-drive-updater [/query | --query | -query | /update | --update | -update]
 
 | Flag | Mode | Behaviour |
 | --- | --- | --- |
-| *(none)* | query | Default. Detects installed versions and compares against OSD. No changes made. |
+| *(none)* | query | Default. Detects installed versions and compares against OSD. Logs exactly what update mode *would* do, but makes no changes. |
 | `/query`, `--query`, `-query` | query | Explicit query mode. Identical to running with no flag. |
-| `/update`, `--update`, `-update` | update | Comparison + triggers install/update actions for packages that are out-of-date or missing. |
+| `/update`, `--update`, `-update` | update | Downloads and silently installs any out-of-date or missing packages (CDK 3rd Party Managed Assemblies, WebStart, BlueZone). Installers are deleted after each install completes. Adaptiva requires external management and is not installed by this tool. |
 
 Flag matching is **case-insensitive** and accepts `/`, `--`, or `-` prefixes.
 
@@ -116,14 +126,14 @@ The tool produces the following ASCII tables in order:
 
 | Table | Contents |
 | --- | --- |
-| **Runtime Summary** | App name, mode, OSD URL, log file path |
+| **Runtime Summary** | App name, mode, OSD URL, download directory, log file path |
 | **CDK Installation Info** | All registry and path checks (ADP, WebStart URL, Adaptiva GUIDs, SIA paths, WebStart version) |
 | **Adaptiva Remote Version** | Source URL and fetched Adaptiva version string |
 | **OSD Catalog Core** | Category, description, version for every entry on the OSD page |
 | **OSD Catalog Details** | Category, description, silent-install arguments, download link |
 | **OSD Catalog Summary** | Total entry count |
 | **Installed vs OSD Summary** | Per-target: installed version, OSD version, state, action |
-| **Installed vs OSD Details** | Per-target: download link, notes |
+| **Installed vs OSD Details** | Per-target: download link, install args used/planned, notes |
 
 #### Version state values
 
@@ -182,9 +192,9 @@ main.rs
 
 ## Tracked Software
 
-| Friendly Name | OSD Description | Detection Method |
-| --- | --- | --- |
-| CDK Drive 3rd Party Managed Assemblies 96.x | CDK Drive 3rd Party Managed Assemblies 96.x | `HKCR\Installer\Products` MSI scan |
-| Adaptiva | CDK Software Install Agent ( Adaptiva ) | MSI scan + `OneSiteClient.exe` file version |
-| BlueZone | CDK Terminal Emulator | `bzvt.exe` file version under Program Files |
-| CDK Drive WebStart | CDK Drive WebStart | `CDK Drive WebStart.exe` file version (cached in `CdkInfo`) |
+| Friendly Name | OSD Description | Detection Method | Auto-Install |
+| --- | --- | --- | --- |
+| CDK Drive 3rd Party Managed Assemblies 96.x | CDK Drive 3rd Party Managed Assemblies 96.x | `HKCR\Installer\Products` MSI scan | Yes (`CDK_3RD_PARTY_INSTALL_ARGS`) |
+| Adaptiva | CDK Software Install Agent ( Adaptiva ) | MSI scan + `OneSiteClient.exe` file version | No (external/CDK SIA) |
+| BlueZone | CDK Terminal Emulator | `bzvt.exe` file version under Program Files | Yes (`CDK_BLUEZONE_INSTALL_ARGS`) |
+| CDK Drive WebStart | CDK Drive WebStart | `CDK Drive WebStart.exe` file version (cached in `CdkInfo`) | Yes (`CDK_WEBSTART_INSTALL_ARGS`) |
