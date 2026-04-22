@@ -6,7 +6,7 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 
 1. `main()` loads `.env` with `dotenvy::dotenv().ok()`.
 2. `main()` calls `init_logging()`, which resolves `LOG_DIR`, creates the log directory, opens a timestamped log file, and configures `fern` to write to stdout and the file.
-3. `AppConfig::from_env()` reads `CDK_DRIVE_OSD_URL` and `ADAPTIVA_VERSION_URL`.
+3. `AppConfig::from_env()` reads `CDK_DRIVE_OSD_URL`, `ADAPTIVA_VERSION_URL`, and `DOWNLOAD_DIR`.
 4. `AppMode::from_args(&args[1..])` parses the CLI mode. Query mode is the default.
 5. `app_logging::log_app_mode()` and `app_logging::log_startup_summary()` emit the initial runtime tables.
 6. `cdk_info::gather()` collects registry, filesystem, Adaptiva, SIA, URL-handler, and WebStart version state.
@@ -17,9 +17,10 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 11. If a remote Adaptiva version is available, `main()` updates the existing Adaptiva catalog entry or appends a synthetic one.
 12. `app_logging::log_adaptiva_remote_version()` and `app_logging::log_osd_catalog()` log the remote Adaptiva source and full catalog.
 13. `main()` iterates `TARGET_SOFTWARES`, calling `process_target()` once per target.
-14. `process_target()` calls each target's detection function, finds the matching OSD catalog entry, compares versions with `compare_software_version()`, and returns a `TargetComparisonRow`.
-15. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
-16. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
+14. `process_target()` calls the target's detection function, compares against the OSD catalog, and either describes (query) or executes (update) the install action via `perform_or_describe_install()`.
+15. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, runs it with `run_installer()`, deletes the downloaded file, and returns an outcome string.
+16. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
+17. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
 ## Configuration
 
@@ -27,7 +28,11 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 | --- | --- | --- | --- | --- |
 | `version_source_url` | `CDK_DRIVE_OSD_URL` | Yes | None | `fetch_software_catalog()` |
 | `adaptiva_version_url` | `ADAPTIVA_VERSION_URL` | No | `https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt` | `fetch_adaptiva_version()` |
-| Log directory | `LOG_DIR` | No | `<current working directory>/cdk-updater-logs` | `init_logging()` |
+| Log directory | `LOG_DIR` | No | `<cwd>/cdk-updater-logs` | `init_logging()` |
+| `download_dir` | `DOWNLOAD_DIR` | No | `<cwd>/cdk-updater-downloads` | `download_installer()` |
+| Install args override | `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive 3rd Party Managed Assemblies 96.x |
+| Install args override | `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive WebStart |
+| Install args override | `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for BlueZone |
 
 ## `main.rs`
 
@@ -37,12 +42,12 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 
 | Type | Visibility | Fields / variants | Description |
 | --- | --- | --- | --- |
-| `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>` | Static target definition used by `process_target()`. |
+| `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>`; `install_args_env_var: Option<&'static str>` | Static target definition used by `process_target()`. `install_args_env_var` is `None` for targets this tool does not install (Adaptiva). |
 | `AppMode` | private | `Query`; `Update` | Runtime mode parsed from CLI arguments. |
-| `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String` | Environment-derived application configuration. |
+| `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String`; `download_dir: PathBuf` | Environment-derived application configuration. |
 | `SoftwareEntry` | private crate root type | `category: String`; `description: String`; `version_number: String`; `file_version: String`; `silent_install_arguments: String`; `download_link: String` | Parsed OSD catalog row or synthetic Adaptiva row. |
 | `VersionState` | private | `NeedsUpdate`; `Newer`; `Same` | Comparison result for an installed version against an OSD version. |
-| `SoftwareComparison` | private | `description: String`; `version: String`; `state: VersionState`; `download_link: String` | Normalized comparison data returned by `compare_software_version()`. |
+| `SoftwareComparison` | private | `description: String`; `version: String`; `state: VersionState`; `download_link: String`; `silent_install_arguments: String` | Normalized comparison data returned by `compare_software_version()`. |
 
 ### Constants
 
@@ -52,12 +57,12 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 
 ### Target Software Table
 
-| `installed_name` | `osd_description` | Detection function |
-| --- | --- | --- |
-| `CDK Drive 3rd Party Managed Assemblies 96.x` | `CDK Drive 3rd Party Managed Assemblies 96.x` | `installed::detect_cdk_drive_3rd_party_managed_assemblies_96x` |
-| `Adaptiva` | `CDK Software Install Agent ( Adaptiva )` | `installed::detect_adaptiva` |
-| `BlueZone` | `CDK Terminal Emulator` | `installed::detect_bluezone` |
-| `CDK Drive WebStart` | `CDK Drive WebStart` | `installed::get_webstart_installed_version_from_cdk_info` |
+| `installed_name` | `osd_description` | Detection function | `install_args_env_var` |
+| --- | --- | --- | --- |
+| `CDK Drive 3rd Party Managed Assemblies 96.x` | `CDK Drive 3rd Party Managed Assemblies 96.x` | `installed::detect_cdk_drive_3rd_party_managed_assemblies_96x` | `Some("CDK_3RD_PARTY_INSTALL_ARGS")` |
+| `Adaptiva` | `CDK Software Install Agent ( Adaptiva )` | `installed::detect_adaptiva` | `None` |
+| `BlueZone` | `CDK Terminal Emulator` | `installed::detect_bluezone` | `Some("CDK_BLUEZONE_INSTALL_ARGS")` |
+| `CDK Drive WebStart` | `CDK Drive WebStart` | `installed::get_webstart_installed_version_from_cdk_info` | `Some("CDK_WEBSTART_INSTALL_ARGS")` |
 
 ### Functions
 
@@ -67,7 +72,14 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `AppMode::from_args` | `fn from_args(args: &[String]) -> Self` | Parses `/query`, `--query`, `-query`, `/update`, `--update`, or `-update`, case-insensitively; defaults to query. |
 | `AppConfig::from_env` | `fn from_env() -> Result<Self>` | Reads required and optional environment variables. |
 | `app_mode_as_str` | `fn app_mode_as_str(mode: &AppMode) -> &'static str` | Converts `AppMode` to `query` or `update` for logs. |
-| `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo) -> Result<TargetComparisonRow>` | Detects a target's installed version, compares it to the OSD catalog, and builds a log row. |
+| `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo, config: &AppConfig) -> Result<TargetComparisonRow>` | Detects a target's installed version, compares it to the OSD catalog, and calls `perform_or_describe_install()` for any target that needs install or update. |
+| `perform_or_describe_install` | `fn perform_or_describe_install(target: &TargetSoftware, mode: &AppMode, download_link: &str, osd_args: &str, config: &AppConfig, operation: &str) -> (String, String)` | Returns `(action, install_args)`. In query mode, returns a description of what would happen. In update mode, calls `actually_install()` and returns the outcome. Targets with `install_args_env_var = None` return an external-management message. |
+| `actually_install` | `fn actually_install(url: &str, args: &str, download_dir: &Path) -> String` | Downloads the installer, runs it, deletes the file, and returns a human-readable outcome string. |
+| `download_installer` | `fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf>` | GETs the installer URL, checks HTTP status, writes the body to `download_dir/<filename>`, and returns the path. |
+| `run_installer` | `fn run_installer(path: &Path, args: &str) -> Result<std::process::ExitStatus>` | Splits `args` with `split_install_args()` and runs the installer via `Command::new`, waiting for completion. |
+| `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
+| `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
+| `capitalize_first` | `fn capitalize_first(s: &str) -> String` | Uppercases the first character of a string slice. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
 | `parse_software_catalog` | `fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntry>>` | Parses OSD category/table markup into `SoftwareEntry` values. |
@@ -88,7 +100,7 @@ HTML catalog parsing: `parse_software_catalog()` selects `div.category` elements
 
 Version comparison ordering: `compare_versions()` delegates to `version_compare::compare()` and maps `Lt`, `Gt`, and `Eq` to `std::cmp::Ordering`; if the crate cannot compare the strings, it compares trimmed strings lexicographically.
 
-Update mode behavior: update/install actions are currently placeholders. In update mode, out-of-date installed targets produce `Update required`, current/newer targets produce `No update required`, and missing targets with an OSD entry produce `Install required`.
+Update mode behavior: `process_target()` delegates install/update decisions to `perform_or_describe_install()`. For targets with `install_args_env_var = None` (Adaptiva), both modes return an external-management message and no download occurs. For installable targets in query mode, the action is `"Would download and install/update"` and the resolved args (ENV override or OSD args) are shown in `install_args`. In update mode, `actually_install()` is called: it downloads the installer to `DOWNLOAD_DIR`, runs it via `Command::new` with `split_install_args()` tokens, deletes the file (even on failure), and returns an outcome such as `"Installed (exit code: 0)"` or `"Install failed (exit code: N)"`. Targets that are current or newer in any mode produce `"No update required"`.
 
 ## `installed.rs`
 
@@ -217,18 +229,18 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 
 | Type | Visibility | Fields | Description |
 | --- | --- | --- | --- |
-| `TargetComparisonRow` | `pub(crate)` | `target: String`; `osd_description: String`; `installed_version: String`; `osd_version: String`; `state: String`; `action: String`; `download_link: String`; `note: String` | Row emitted in installed-vs-OSD summary and details tables. |
+| `TargetComparisonRow` | `pub(crate)` | `target: String`; `osd_description: String`; `installed_version: String`; `osd_version: String`; `state: String`; `action: String`; `download_link: String`; `install_args: String`; `note: String` | Row emitted in installed-vs-OSD summary and details tables. `install_args` holds the resolved install arguments (query: what would be used; update: what was used). |
 
 ### Public / Exported Functions
 
 | Function | Signature | Description |
 | --- | --- | --- |
 | `log_app_mode` | `pub(crate) fn log_app_mode(mode: &str)` | Logs a prominent startup banner for query/update mode. |
-| `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str)` | Logs the Runtime Summary table. |
+| `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str)` | Logs the Runtime Summary table including the download directory. |
 | `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Logs registry, Adaptiva, SIA, and WebStart state. |
 | `log_adaptiva_remote_version` | `pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>)` | Logs the Adaptiva Remote Version table. |
 | `log_osd_catalog` | `pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry])` | Logs OSD Catalog Core, Details, and Summary tables. |
-| `log_target_comparisons` | `pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow])` | Logs Installed vs OSD Summary and Details tables. |
+| `log_target_comparisons` | `pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow])` | Logs Installed vs OSD Summary and Details tables; Details includes the `install_args` column. |
 
 ### Key Internal Functions
 
@@ -236,7 +248,7 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 | --- | --- | --- |
 | `expand_key_value_rows` | `fn expand_key_value_rows(label: &str, values: &Option<Vec<(String, String)>>, rows: &mut Vec<Vec<String>>)` | Expands optional registry value vectors into table rows. |
 | `build_ascii_table` | `fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String` | Builds a titled ASCII table with separators, header row, and data rows. |
-| `build_ascii_row` | `fn build_ascii_row(cells: &[String], widths: &[usize]) -> String` | Renders one padded `|`-delimited table row. |
+| `build_ascii_row` | `fn build_ascii_row(cells: &[String], widths: &[usize]) -> String` | Renders one padded pipe-delimited table row. |
 | `compute_widths` | `fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize>` | Computes per-column widths from headers and row content. |
 | `build_separator` | `fn build_separator(widths: &[usize]) -> String` | Builds a `+---+` separator row. |
 
