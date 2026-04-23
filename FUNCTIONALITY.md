@@ -11,16 +11,17 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 5. `app_logging::log_app_mode()` and `app_logging::log_startup_summary()` emit the initial runtime tables.
 6. `cdk_info::gather()` collects registry, filesystem, Adaptiva, SIA, URL-handler, and WebStart version state.
 7. `app_logging::log_cdk_info_summary()` logs the gathered CDK installation snapshot.
-8. `fetch_software_catalog()` performs an HTTP GET for the OSD URL and passes the response HTML plus final response URL to `parse_software_catalog()`.
-9. `parse_software_catalog()` reads OSD category sections and adjacent tables into `Vec<SoftwareEntry>`.
-10. `fetch_adaptiva_version()` performs an HTTP GET for the Adaptiva version text file.
-11. If a remote Adaptiva version is available, `main()` updates the existing Adaptiva catalog entry or appends a synthetic one.
-12. `app_logging::log_adaptiva_remote_version()` and `app_logging::log_osd_catalog()` log the remote Adaptiva source and full catalog.
-13. `main()` iterates `TARGET_SOFTWARES`, calling `process_target()` once per target.
-14. `process_target()` calls the target's detection function, compares against the OSD catalog, and either describes (query) or executes (update) the install action via `perform_or_describe_install()`.
-15. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, runs it with `run_installer()`, deletes the downloaded file, and returns an outcome string.
-16. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
-17. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
+8. `write_cdk_info_variables()` writes each CDK Installation Info check result to an individual `.txt` file in `VARIABLES_DIR`.
+9. `fetch_software_catalog()` performs an HTTP GET for the OSD URL and passes the response HTML plus final response URL to `parse_software_catalog()`.
+10. `parse_software_catalog()` reads OSD category sections and adjacent tables into `Vec<SoftwareEntry>`.
+11. `fetch_adaptiva_version()` performs an HTTP GET for the Adaptiva version text file.
+12. If a remote Adaptiva version is available, `main()` updates the existing Adaptiva catalog entry or appends a synthetic one.
+13. `app_logging::log_adaptiva_remote_version()` and `app_logging::log_osd_catalog()` log the remote Adaptiva source and full catalog.
+14. `main()` iterates `TARGET_SOFTWARES`, calling `process_target()` once per target.
+15. `process_target()` calls the target's detection function, compares against the OSD catalog, and either describes (query) or executes (update) the install action via `perform_or_describe_install()`.
+16. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, runs it with `run_installer()`, deletes the downloaded file, and returns an outcome string.
+17. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
+18. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
 ## Configuration
 
@@ -30,6 +31,7 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 | `adaptiva_version_url` | `ADAPTIVA_VERSION_URL` | No | `https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt` | `fetch_adaptiva_version()` |
 | Log directory | `LOG_DIR` | No | `<cwd>/cdk-updater-logs` | `init_logging()` |
 | `download_dir` | `DOWNLOAD_DIR` | No | `<cwd>/cdk-updater-downloads` | `download_installer()` |
+| `variables_dir` | `VARIABLES_DIR` | No | `<exe dir>/cdk-updater-variables` | `write_cdk_info_variables()` |
 | Install args override | `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive 3rd Party Managed Assemblies 96.x |
 | Install args override | `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive WebStart |
 | Install args override | `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for BlueZone |
@@ -44,7 +46,7 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | --- | --- | --- | --- |
 | `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>`; `install_args_env_var: Option<&'static str>` | Static target definition used by `process_target()`. `install_args_env_var` is `None` for targets this tool does not install (Adaptiva). |
 | `AppMode` | private | `Query`; `Update` | Runtime mode parsed from CLI arguments. |
-| `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String`; `download_dir: PathBuf` | Environment-derived application configuration. |
+| `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String`; `download_dir: PathBuf`; `variables_dir: PathBuf` | Environment-derived application configuration. |
 | `SoftwareEntry` | private crate root type | `category: String`; `description: String`; `version_number: String`; `file_version: String`; `silent_install_arguments: String`; `download_link: String` | Parsed OSD catalog row or synthetic Adaptiva row. |
 | `VersionState` | private | `NeedsUpdate`; `Newer`; `Same` | Comparison result for an installed version against an OSD version. |
 | `SoftwareComparison` | private | `description: String`; `version: String`; `state: VersionState`; `download_link: String`; `silent_install_arguments: String` | Normalized comparison data returned by `compare_software_version()`. |
@@ -70,7 +72,7 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | --- | --- | --- |
 | `main` | `fn main() -> Result<()>` | Runs the full program: load config, gather local state, fetch remote state, compare targets, and log reports. |
 | `AppMode::from_args` | `fn from_args(args: &[String]) -> Self` | Parses `/query`, `--query`, `-query`, `/update`, `--update`, or `-update`, case-insensitively; defaults to query. |
-| `AppConfig::from_env` | `fn from_env() -> Result<Self>` | Reads required and optional environment variables. |
+| `AppConfig::from_env` | `fn from_env() -> Result<Self>` | Reads required and optional environment variables, including `VARIABLES_DIR` defaulting to `<exe dir>/cdk-updater-variables`. |
 | `app_mode_as_str` | `fn app_mode_as_str(mode: &AppMode) -> &'static str` | Converts `AppMode` to `query` or `update` for logs. |
 | `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo, config: &AppConfig) -> Result<TargetComparisonRow>` | Detects a target's installed version, compares it to the OSD catalog, and calls `perform_or_describe_install()` for any target that needs install or update. |
 | `perform_or_describe_install` | `fn perform_or_describe_install(target: &TargetSoftware, mode: &AppMode, download_link: &str, osd_args: &str, config: &AppConfig, operation: &str) -> (String, String)` | Returns `(action, install_args)`. In query mode, returns a description of what would happen. In update mode, calls `actually_install()` and returns the outcome. Targets with `install_args_env_var = None` return an external-management message. |
@@ -80,6 +82,9 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
 | `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
 | `capitalize_first` | `fn capitalize_first(s: &str) -> String` | Uppercases the first character of a string slice. |
+| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`, assembles (check, result) pairs mirroring the CDK Installation Info table rows, and writes each result to `<to_safe_filename(check)>.txt`. |
+| `expand_key_value_entries` | `fn expand_key_value_entries(label: &str, values: &Option<Vec<(String, String)>>, entries: &mut Vec<(String, String)>)` | Parallel to `app_logging::expand_key_value_rows`; expands optional registry value vectors into (check, result) pairs. |
+| `to_safe_filename` | `fn to_safe_filename(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with underscores, collapses consecutive underscores, and trims leading/trailing underscores. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
 | `parse_software_catalog` | `fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntry>>` | Parses OSD category/table markup into `SoftwareEntry` values. |
@@ -239,7 +244,7 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 | Function | Signature | Description |
 | --- | --- | --- |
 | `log_app_mode` | `pub(crate) fn log_app_mode(mode: &str)` | Logs a prominent startup banner for query/update mode. |
-| `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str)` | Logs the Runtime Summary table including the download directory. |
+| `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str, variables_dir: &str)` | Logs the Runtime Summary table including the download and variables directories. |
 | `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Logs registry, Adaptiva, SIA, and WebStart state. |
 | `log_adaptiva_remote_version` | `pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>)` | Logs the Adaptiva Remote Version table. |
 | `log_osd_catalog` | `pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry])` | Logs OSD Catalog Core, Details, and Summary tables. |
