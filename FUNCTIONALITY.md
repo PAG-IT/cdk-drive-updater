@@ -82,8 +82,7 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
 | `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
 | `capitalize_first` | `fn capitalize_first(s: &str) -> String` | Uppercases the first character of a string slice. |
-| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`, assembles (check, result) pairs mirroring the CDK Installation Info table rows, and writes each result to `<to_safe_filename(check)>.txt`. |
-| `expand_key_value_entries` | `fn expand_key_value_entries(label: &str, values: &Option<Vec<(String, String)>>, entries: &mut Vec<(String, String)>)` | Parallel to `app_logging::expand_key_value_rows`; expands optional registry value vectors into (check, result) pairs. |
+| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`, iterates `app_logging::cdk_info_entries(info)`, and writes each result to `<to_safe_filename(check)>.txt`. |
 | `to_safe_filename` | `fn to_safe_filename(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with underscores, collapses consecutive underscores, and trims leading/trailing underscores. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
@@ -245,7 +244,8 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 | --- | --- | --- |
 | `log_app_mode` | `pub(crate) fn log_app_mode(mode: &str)` | Logs a prominent startup banner for query/update mode. |
 | `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str, variables_dir: &str)` | Logs the Runtime Summary table including the download and variables directories. |
-| `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Logs registry, Adaptiva, SIA, and WebStart state. |
+| `cdk_info_entries` | `pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)>` | Builds the ordered `(check, result)` pairs for the CDK Installation Info table; shared by `log_cdk_info_summary` and `write_cdk_info_variables`. |
+| `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Calls `cdk_info_entries`, maps to rows, and logs the CDK Installation Info table. |
 | `log_adaptiva_remote_version` | `pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>)` | Logs the Adaptiva Remote Version table. |
 | `log_osd_catalog` | `pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry])` | Logs OSD Catalog Core, Details, and Summary tables. |
 | `log_target_comparisons` | `pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow])` | Logs Installed vs OSD Summary and Details tables; Details includes the `install_args` column. |
@@ -254,7 +254,7 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 
 | Function | Signature | Description |
 | --- | --- | --- |
-| `expand_key_value_rows` | `fn expand_key_value_rows(label: &str, values: &Option<Vec<(String, String)>>, rows: &mut Vec<Vec<String>>)` | Expands optional registry value vectors into table rows. |
+| `expand_key_value_rows` | `fn expand_key_value_rows(label: &str, values: &Option<Vec<(String, String)>>, rows: &mut Vec<(String, String)>)` | Expands optional registry value vectors into `(check, result)` pairs for `cdk_info_entries`. |
 | `build_ascii_table` | `fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String` | Builds a titled ASCII table with separators, header row, and data rows. |
 | `build_ascii_row` | `fn build_ascii_row(cells: &[String], widths: &[usize]) -> String` | Renders one padded pipe-delimited table row. |
 | `compute_widths` | `fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize>` | Computes per-column widths from headers and row content. |
