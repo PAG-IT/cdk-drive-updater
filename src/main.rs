@@ -784,13 +784,26 @@ fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> 
     for (check, result) in &app_logging::cdk_info_entries(info) {
         let filename = format!("{}.txt", to_safe_filename(check));
         let file_path = dir.join(&filename);
+        delete_if_exists(&file_path);
         fs::write(&file_path, result)
             .with_context(|| format!("failed to write variable file: {}", file_path.display()))?;
     }
 
     let summary_path = dir.join("summary.txt");
+    delete_if_exists(&summary_path);
     fs::write(&summary_path, app_logging::cdk_info_table_string(info))
         .with_context(|| format!("failed to write summary file: {}", summary_path.display()))?;
+
+    //=-- Remove any stale last-run marker before writing the new one.
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        for entry in read_dir.filter_map(|e| e.ok()) {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            if name_str.starts_with("last-run--") && name_str.ends_with(".txt") {
+                delete_if_exists(&entry.path());
+            }
+        }
+    }
 
     let now = Local::now();
     let last_run_name = format!("last-run--{}--{}.txt", build_timestamp(now), now.timestamp());
@@ -799,6 +812,21 @@ fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> 
         .with_context(|| format!("failed to write last-run file: {}", last_run_path.display()))?;
 
     Ok(())
+}
+
+//=-- Deletes `path` if it exists, logging a warning on failure rather than propagating the error.
+fn delete_if_exists(path: &Path) {
+    match path.try_exists() {
+        Ok(true) => {
+            if let Err(e) = fs::remove_file(path) {
+                log::warn!("Failed to delete existing file | path={} | error={}", path.display(), e);
+            }
+        }
+        Ok(false) => {}
+        Err(e) => {
+            log::warn!("Could not check existence of file | path={} | error={}", path.display(), e);
+        }
+    }
 }
 
 /// Converts a check label into a Windows-safe filename token.
