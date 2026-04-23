@@ -599,6 +599,12 @@ fn actually_install(url: &str, args: &str, download_dir: &Path) -> String {
         }
     };
 
+    //=-- Kill prerequisite processes before running the installer.
+    kill_process_if_running("wsStart_4.exe");
+    log::info!("Waiting 20 seconds after killing wsStart_4.exe before proceeding with install");
+    std::thread::sleep(std::time::Duration::from_secs(20));
+    kill_process_if_running("wsStartChrome.exe");
+
     let run_result = run_installer(&installer_path, args);
 
     //=-- Delete the installer file regardless of the run outcome.
@@ -791,6 +797,37 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
     }
 
     Err(last_error)
+}
+
+/// Terminates all running instances of the named process using `taskkill /F /IM`.
+/// Logs whether the process was found and killed, was not running, or if the kill failed.
+fn kill_process_if_running(process_name: &str) {
+    let result = Command::new("taskkill")
+        .args(["/F", "/IM", process_name])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                log::info!("Killed process | name={}", process_name);
+            } else {
+                //=-- Exit code 128 means the process was not found; treat as non-error.
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let code = output.status.code().unwrap_or(-1);
+                if code == 128 {
+                    log::info!("Process not running, nothing to kill | name={}", process_name);
+                } else {
+                    log::warn!(
+                        "taskkill exited with code {} for process | name={} | stderr={}",
+                        code, process_name, stderr.trim()
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to invoke taskkill | name={} | error={}", process_name, e);
+        }
+    }
 }
 
 /// Runs the installer at `path` with the provided argument string and waits for completion.
