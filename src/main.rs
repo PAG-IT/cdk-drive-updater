@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::env;
 use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -667,21 +668,18 @@ fn msiexec_exit_code_description(code: i32) -> &'static str {
 
 /// Downloads the file at `url` into `download_dir` and returns the local path.
 /// Creates `download_dir` if it does not already exist.
+/// Streams the body in chunks and logs progress. Retries up to 10 attempts with
+/// a 10-second delay between each on any network or body-read failure.
+/// Uses a browser-compatible User-Agent to avoid server-side rejection.
 fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
-    let response = reqwest::blocking::get(url)
-        .with_context(|| format!("failed to request installer URL: {}", url))?;
+    const MAX_ATTEMPTS: u32 = 10;
+    const RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(10);
+    const CHUNK_SIZE: usize = 256 * 1024; // 256 KB per chunk
 
-    if !response.status().is_success() {
-        anyhow::bail!(
-            "installer download returned HTTP {}: {}",
-            response.status().as_u16(),
-            url
-        );
-    }
-
-    let bytes = response
-        .bytes()
-        .context("failed to read installer response body")?;
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
+        .build()
+        .context("failed to build HTTP client")?;
 
     let filename = extract_filename_from_url(url).unwrap_or_else(|| "installer.exe".to_string());
 
@@ -689,16 +687,110 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
         .with_context(|| format!("failed to create download directory: {}", download_dir.display()))?;
 
     let dest_path = download_dir.join(&filename);
-    fs::write(&dest_path, &bytes)
-        .with_context(|| format!("failed to write installer to: {}", dest_path.display()))?;
 
-    log::info!(
-        "Installer downloaded | url={} | dest={}",
-        url,
-        dest_path.display()
-    );
+    let mut last_error: anyhow::Error = anyhow::anyhow!("no attempts made");
 
-    Ok(dest_path)
+    for attempt in 1..=MAX_ATTEMPTS {
+        log::info!(
+            "Starting installer download | url={} | attempt={}/{}",
+            url, attempt, MAX_ATTEMPTS
+        );
+
+        let attempt_result = (|| -> Result<()> {
+            let response = client
+                .get(url)
+                .send()
+                .with_context(|| format!("failed to request installer URL: {}", url))?;
+
+            if !response.status().is_success() {
+                anyhow::bail!(
+                    "installer download returned HTTP {}: {}",
+                    response.status().as_u16(),
+                    url
+                );
+            }
+
+            let content_length = response.content_length();
+            if let Some(total) = content_length {
+                log::info!(
+                    "Installer download started | url={} | size={} bytes ({:.1} MB)",
+                    url, total, total as f64 / 1_048_576.0
+                );
+            } else {
+                log::info!("Installer download started | url={} | size=unknown", url);
+            }
+
+            let mut reader = response;
+            let mut file = fs::File::create(&dest_path)
+                .with_context(|| format!("failed to create installer file: {}", dest_path.display()))?;
+
+            let mut buf = vec![0u8; CHUNK_SIZE];
+            let mut bytes_written: u64 = 0;
+            let mut last_pct_milestone: u64 = 0;
+            let mut next_mb_milestone: u64 = 10;
+
+            loop {
+                let n = reader
+                    .read(&mut buf)
+                    .context("failed to read installer response body")?;
+                if n == 0 {
+                    break;
+                }
+                file.write_all(&buf[..n])
+                    .with_context(|| format!("failed to write installer chunk to: {}", dest_path.display()))?;
+                bytes_written += n as u64;
+
+                if let Some(total) = content_length {
+                    let pct = bytes_written * 100 / total;
+                    let milestone = pct / 10;
+                    if milestone > last_pct_milestone {
+                        last_pct_milestone = milestone;
+                        log::info!(
+                            "Installer download progress | url={} | bytes={}/{} ({}%)",
+                            url, bytes_written, total, pct
+                        );
+                    }
+                } else {
+                    let mb_done = bytes_written / 1_048_576;
+                    if mb_done >= next_mb_milestone {
+                        log::info!(
+                            "Installer download progress | url={} | bytes={} ({:.1} MB)",
+                            url, bytes_written, bytes_written as f64 / 1_048_576.0
+                        );
+                        next_mb_milestone = mb_done + 10;
+                    }
+                }
+            }
+
+            log::info!(
+                "Installer downloaded | url={} | dest={} | bytes={}",
+                url, dest_path.display(), bytes_written
+            );
+            Ok(())
+        })();
+
+        match attempt_result {
+            Ok(()) => return Ok(dest_path.clone()),
+            Err(e) => {
+                //=-- Remove any partially-written file so the next attempt starts clean.
+                let _ = fs::remove_file(&dest_path);
+                log::warn!(
+                    "Installer download attempt {}/{} failed | url={} | error={}",
+                    attempt, MAX_ATTEMPTS, url, e
+                );
+                last_error = e;
+                if attempt < MAX_ATTEMPTS {
+                    log::info!(
+                        "Retrying installer download | url={} | next_attempt={}/{} | delay={}s",
+                        url, attempt + 1, MAX_ATTEMPTS, RETRY_DELAY.as_secs()
+                    );
+                    std::thread::sleep(RETRY_DELAY);
+                }
+            }
+        }
+    }
+
+    Err(last_error)
 }
 
 /// Runs the installer at `path` with the provided argument string and waits for completion.
