@@ -72,16 +72,23 @@ pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)
 }
 
 pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
+    log::info!("{}", cdk_info_table_string(info));
+}
+
+/// Returns the CDK Installation Info ASCII table as a formatted string.
+///
+/// Used by both [`log_cdk_info_summary`] and [`crate::write_cdk_info_variables`].
+pub(crate) fn cdk_info_table_string(info: &cdk_info::CdkInfo) -> String {
     let rows: Vec<Vec<String>> = cdk_info_entries(info)
         .into_iter()
         .map(|(check, result)| vec![check, result])
         .collect();
 
-    log::info!("{}", build_ascii_table(
+    build_ascii_table(
         "CDK Installation Info",
         &["Check", "Result"],
         &rows,
-    ));
+    )
 }
 
 //=-- Emits one row per value pair when the key exists, or a single "Not Found" row when absent.
