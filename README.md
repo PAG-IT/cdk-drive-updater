@@ -130,7 +130,7 @@ The tool produces the following ASCII tables in order:
 | --- | --- |
 | **Runtime Summary** | App name, mode, OSD URL, download directory, log file path |
 | **CDK Installation Info** | All registry and path checks (ADP, WebStart URL, Adaptiva GUIDs, SIA paths, WebStart version) |
-| **CDK Installation Info variable files** | Each check result from the CDK Installation Info table is also written to an individual `.txt` file in `VARIABLES_DIR`. The filename is the check label sanitized to a Windows-safe token (spaces and special characters replaced with underscores, consecutive underscores collapsed), e.g. `ADP_wsvc_4.5.txt`, `WebStart_Version_Executable.txt`. Each file contains only the result value. Multi-value Adaptiva CDK key entries generate one file per sub-entry. |
+| **CDK Installation Info variable files** | Each check result from the CDK Installation Info table is written to an individual `.txt` file in `VARIABLES_DIR`. Filenames are the check label sanitized to a Windows-safe token and lowercased (e.g. `adp_wsvc_4.5.txt`, `webstart_version_executable.txt`). Each file contains only the result value. Multi-value Adaptiva CDK key entries generate one file per sub-entry. A `summary.txt` containing the full formatted table is also written, along with an empty `last-run--YYYY-MM-DD--H-MM-am\|pm--EPOCH.txt` marker file. |
 | **Adaptiva Remote Version** | Source URL and fetched Adaptiva version string |
 | **OSD Catalog Core** | Category, description, version for every entry on the OSD page |
 | **OSD Catalog Details** | Category, description, silent-install arguments, download link |
