@@ -71,6 +71,7 @@ in the working directory is loaded automatically via `dotenvy`.
 | `ADAPTIVA_VERSION_URL` | No | `https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt` | URL of a plain-text file containing the current Adaptiva version string |
 | `LOG_DIR` | No | `./cdk-updater-logs` (relative to cwd) | Directory where timestamped log files are written |
 | `DOWNLOAD_DIR` | No | `./cdk-updater-downloads` (relative to cwd) | Directory where installer files are saved during update mode; deleted after each install |
+| `VARIABLES_DIR` | No | `<exe dir>/cdk-updater-variables` | Directory where each CDK Installation Info check result is written as an individual `.txt` file |
 | `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive 3rd Party Managed Assemblies 96.x |
 | `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive WebStart |
 | `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK BlueZone (Terminal Emulator) |
@@ -80,6 +81,7 @@ in the working directory is loaded automatically via `dotenvy`.
 ```env
 CDK_DRIVE_OSD_URL=https://your-cdk-server/apps/autoTools/cds/osd/osd.php
 DOWNLOAD_DIR=C:\Temp\cdk-downloads
+VARIABLES_DIR=C:\Temp\cdk-variables
 CDK_3RD_PARTY_INSTALL_ARGS=
 CDK_WEBSTART_INSTALL_ARGS=
 CDK_BLUEZONE_INSTALL_ARGS=
@@ -128,6 +130,7 @@ The tool produces the following ASCII tables in order:
 | --- | --- |
 | **Runtime Summary** | App name, mode, OSD URL, download directory, log file path |
 | **CDK Installation Info** | All registry and path checks (ADP, WebStart URL, Adaptiva GUIDs, SIA paths, WebStart version) |
+| **CDK Installation Info variable files** | Each check result from the CDK Installation Info table is also written to an individual `.txt` file in `VARIABLES_DIR`. The filename is the check label sanitized to a Windows-safe token (spaces and special characters replaced with underscores, consecutive underscores collapsed), e.g. `ADP_wsvc_4.5.txt`, `WebStart_Version_Executable.txt`. Each file contains only the result value. Multi-value Adaptiva CDK key entries generate one file per sub-entry. |
 | **Adaptiva Remote Version** | Source URL and fetched Adaptiva version string |
 | **OSD Catalog Core** | Category, description, version for every entry on the OSD page |
 | **OSD Catalog Details** | Category, description, silent-install arguments, download link |
