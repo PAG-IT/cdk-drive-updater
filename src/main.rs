@@ -771,11 +771,12 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-/// Writes each CDK Installation Info check result to an individual `.txt` file in `dir`.
+/// Writes each CDK Installation Info check result to an individual `.txt` file in `dir`,
+/// a `summary.txt` containing the full CDK Installation Info table, and a
+/// `last-run--<timestamp>--<epoch>.txt` marker file recording when the run occurred.
 ///
-/// The filename is derived from the check label by replacing non-alphanumeric, non-dot,
-/// non-hyphen characters with underscores and collapsing consecutive underscores.
-/// The file contents are the result value only, with no trailing newline.
+/// All per-check filenames are lowercased. Non-alphanumeric, non-dot, non-hyphen
+/// characters in check labels are replaced with underscores (consecutive collapsed).
 fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> {
     fs::create_dir_all(dir)
         .with_context(|| format!("failed to create variables directory: {}", dir.display()))?;
@@ -786,6 +787,16 @@ fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> 
         fs::write(&file_path, result)
             .with_context(|| format!("failed to write variable file: {}", file_path.display()))?;
     }
+
+    let summary_path = dir.join("summary.txt");
+    fs::write(&summary_path, app_logging::cdk_info_table_string(info))
+        .with_context(|| format!("failed to write summary file: {}", summary_path.display()))?;
+
+    let now = Local::now();
+    let last_run_name = format!("last-run--{}--{}.txt", build_timestamp(now), now.timestamp());
+    let last_run_path = dir.join(&last_run_name);
+    fs::write(&last_run_path, "")
+        .with_context(|| format!("failed to write last-run file: {}", last_run_path.display()))?;
 
     Ok(())
 }
@@ -808,7 +819,7 @@ fn to_safe_filename(name: &str) -> String {
             last_was_underscore = true;
         }
     }
-    result.trim_matches('_').to_string()
+    result.trim_matches('_').to_string().to_ascii_lowercase()
 }
 
 #[cfg(test)]
