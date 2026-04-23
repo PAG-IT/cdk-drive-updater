@@ -24,12 +24,13 @@ pub(crate) fn log_app_mode(mode: &str) {
     log::info!("========================================");
 }
 
-pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str) {
+pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str, variables_dir: &str) {
     let rows = vec![
         vec!["App".to_string(), "CDK Drive updater".to_string()],
         vec!["Mode".to_string(), mode.to_string()],
         vec!["OSD URL".to_string(), version_source_url.to_string()],
         vec!["Download Dir".to_string(), download_dir.to_string()],
+        vec!["Variables Dir".to_string(), variables_dir.to_string()],
         vec!["Log File".to_string(), log_file_path.display().to_string()],
     ];
 
@@ -40,29 +41,41 @@ pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_sour
     ));
 }
 
-pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
-    let mut rows: Vec<Vec<String>> = Vec::new();
+/// Builds the ordered `(check, result)` pairs for the CDK Installation Info table.
+///
+/// Used by both [`log_cdk_info_summary`] and [`crate::write_cdk_info_variables`].
+pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)> {
+    let mut entries: Vec<(String, String)> = Vec::new();
 
-    rows.push(vec!["ADP (wsvc 4.5)".to_string(), info.adp_check.to_string()]);
-    rows.push(vec!["WebStart URL Protocol".to_string(), info.webstart_url_check.to_string()]);
-    rows.push(vec!["WebStart Shell Command".to_string(), info.webstart_shell_var.clone()]);
-    rows.push(vec!["UnifyDriveEnabler".to_string(), info.unify_drive_enabler_check.to_string()]);
-    rows.push(vec!["Adaptiva Client".to_string(), info.adaptiva_check.to_string()]);
-    expand_key_value_rows("Adaptiva CDK Key (Native)", &info.adaptiva_cdk_key_values, &mut rows);
-    expand_key_value_rows("Adaptiva CDK Key (WOW6432Node)", &info.adaptiva_cdk_key_wow_values, &mut rows);
-    rows.push(vec!["Adaptiva Server Host (Native)".to_string(), info.adaptiva_server_host_name.clone()]);
-    rows.push(vec!["Adaptiva Server Host (WOW6432Node)".to_string(), info.adaptiva_server_host_name_wow.clone()]);
-    rows.push(vec!["Adaptiva Server Locator (Native)".to_string(), info.adaptiva_server_locator_name.clone()]);
-    rows.push(vec!["Adaptiva Server Locator (WOW6432Node)".to_string(), info.adaptiva_server_locator_name_wow.clone()]);
-    rows.push(vec!["Adaptiva Setup GUID (Native)".to_string(), info.adaptiva_setup_guid.clone()]);
-    rows.push(vec!["Adaptiva Setup GUID (WOW6432Node)".to_string(), info.adaptiva_setup_guid_wow.clone()]);
-    rows.push(vec!["Adaptiva Client Data Manager GUID (Native)".to_string(), info.adaptiva_client_data_manager_guid.clone()]);
-    rows.push(vec!["Adaptiva Client Data Manager GUID (WOW6432Node)".to_string(), info.adaptiva_client_data_manager_guid_wow.clone()]);
-    rows.push(vec!["SIA Directory".to_string(), info.sia_check.to_string()]);
-    rows.push(vec!["SIA Win10 XML".to_string(), info.sia_xml_check.to_string()]);
-    rows.push(vec!["SIA Fix Script".to_string(), info.sia_fix_check.to_string()]);
-    rows.push(vec!["WebStart Version (Executable)".to_string(), info.webstart_version.clone()]);
-    rows.push(vec!["WebStart Version (Add/Remove)".to_string(), info.webstart_add_remove_version.clone()]);
+    entries.push(("ADP (wsvc 4.5)".to_string(), info.adp_check.to_string()));
+    entries.push(("WebStart URL Protocol".to_string(), info.webstart_url_check.to_string()));
+    entries.push(("WebStart Shell Command".to_string(), info.webstart_shell_var.clone()));
+    entries.push(("UnifyDriveEnabler".to_string(), info.unify_drive_enabler_check.to_string()));
+    entries.push(("Adaptiva Client".to_string(), info.adaptiva_check.to_string()));
+    expand_key_value_rows("Adaptiva CDK Key (Native)", &info.adaptiva_cdk_key_values, &mut entries);
+    expand_key_value_rows("Adaptiva CDK Key (WOW6432Node)", &info.adaptiva_cdk_key_wow_values, &mut entries);
+    entries.push(("Adaptiva Server Host (Native)".to_string(), info.adaptiva_server_host_name.clone()));
+    entries.push(("Adaptiva Server Host (WOW6432Node)".to_string(), info.adaptiva_server_host_name_wow.clone()));
+    entries.push(("Adaptiva Server Locator (Native)".to_string(), info.adaptiva_server_locator_name.clone()));
+    entries.push(("Adaptiva Server Locator (WOW6432Node)".to_string(), info.adaptiva_server_locator_name_wow.clone()));
+    entries.push(("Adaptiva Setup GUID (Native)".to_string(), info.adaptiva_setup_guid.clone()));
+    entries.push(("Adaptiva Setup GUID (WOW6432Node)".to_string(), info.adaptiva_setup_guid_wow.clone()));
+    entries.push(("Adaptiva Client Data Manager GUID (Native)".to_string(), info.adaptiva_client_data_manager_guid.clone()));
+    entries.push(("Adaptiva Client Data Manager GUID (WOW6432Node)".to_string(), info.adaptiva_client_data_manager_guid_wow.clone()));
+    entries.push(("SIA Directory".to_string(), info.sia_check.to_string()));
+    entries.push(("SIA Win10 XML".to_string(), info.sia_xml_check.to_string()));
+    entries.push(("SIA Fix Script".to_string(), info.sia_fix_check.to_string()));
+    entries.push(("WebStart Version (Executable)".to_string(), info.webstart_version.clone()));
+    entries.push(("WebStart Version (Add/Remove)".to_string(), info.webstart_add_remove_version.clone()));
+
+    entries
+}
+
+pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
+    let rows: Vec<Vec<String>> = cdk_info_entries(info)
+        .into_iter()
+        .map(|(check, result)| vec![check, result])
+        .collect();
 
     log::info!("{}", build_ascii_table(
         "CDK Installation Info",
@@ -75,16 +88,16 @@ pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
 fn expand_key_value_rows(
     label: &str,
     values: &Option<Vec<(String, String)>>,
-    rows: &mut Vec<Vec<String>>,
+    rows: &mut Vec<(String, String)>,
 ) {
     match values {
-        None => rows.push(vec![label.to_string(), "Not Found".to_string()]),
+        None => rows.push((label.to_string(), "Not Found".to_string())),
         Some(v) if v.is_empty() => {
-            rows.push(vec![label.to_string(), "(key exists, no values)".to_string()]);
+            rows.push((label.to_string(), "(key exists, no values)".to_string()));
         }
         Some(v) => {
             for (name, data) in v {
-                rows.push(vec![format!("{label} - {name}"), data.clone()]);
+                rows.push((format!("{label} - {name}"), data.clone()));
             }
         }
     }
