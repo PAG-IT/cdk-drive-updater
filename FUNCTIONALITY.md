@@ -11,7 +11,7 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 5. `app_logging::log_app_mode()` and `app_logging::log_startup_summary()` emit the initial runtime tables.
 6. `cdk_info::gather()` collects registry, filesystem, Adaptiva, SIA, URL-handler, and WebStart version state.
 7. `app_logging::log_cdk_info_summary()` logs the gathered CDK installation snapshot.
-8. `write_cdk_info_variables()` writes each CDK Installation Info check result to an individual `.txt` file in `VARIABLES_DIR`.
+8. `write_cdk_info_variables()` writes each CDK Installation Info check result to a lowercased `.txt` file in `VARIABLES_DIR`, a `summary.txt` containing the full table, and a `last-run--<timestamp>--<epoch>.txt` marker file.
 9. `fetch_software_catalog()` performs an HTTP GET for the OSD URL and passes the response HTML plus final response URL to `parse_software_catalog()`.
 10. `parse_software_catalog()` reads OSD category sections and adjacent tables into `Vec<SoftwareEntry>`.
 11. `fetch_adaptiva_version()` performs an HTTP GET for the Adaptiva version text file.
@@ -82,8 +82,8 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
 | `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
 | `capitalize_first` | `fn capitalize_first(s: &str) -> String` | Uppercases the first character of a string slice. |
-| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`, iterates `app_logging::cdk_info_entries(info)`, and writes each result to `<to_safe_filename(check)>.txt`. |
-| `to_safe_filename` | `fn to_safe_filename(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with underscores, collapses consecutive underscores, and trims leading/trailing underscores. |
+| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`; iterates `app_logging::cdk_info_entries(info)` writing each result to a lowercased `<to_safe_filename(check)>.txt`; writes `summary.txt` via `app_logging::cdk_info_table_string()`; writes an empty `last-run--<build_timestamp(now)>--<epoch>.txt` marker. |
+| `to_safe_filename` | `fn to_safe_filename(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with underscores, collapses consecutive underscores, trims leading/trailing underscores, and lowercases the result. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
 | `parse_software_catalog` | `fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntry>>` | Parses OSD category/table markup into `SoftwareEntry` values. |
@@ -245,7 +245,8 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 | `log_app_mode` | `pub(crate) fn log_app_mode(mode: &str)` | Logs a prominent startup banner for query/update mode. |
 | `log_startup_summary` | `pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str, variables_dir: &str)` | Logs the Runtime Summary table including the download and variables directories. |
 | `cdk_info_entries` | `pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)>` | Builds the ordered `(check, result)` pairs for the CDK Installation Info table; shared by `log_cdk_info_summary` and `write_cdk_info_variables`. |
-| `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Calls `cdk_info_entries`, maps to rows, and logs the CDK Installation Info table. |
+| `log_cdk_info_summary` | `pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo)` | Calls `cdk_info_table_string` and logs it. |
+| `cdk_info_table_string` | `pub(crate) fn cdk_info_table_string(info: &cdk_info::CdkInfo) -> String` | Returns the CDK Installation Info ASCII table as a string; used by `log_cdk_info_summary` and `write_cdk_info_variables`. |
 | `log_adaptiva_remote_version` | `pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>)` | Logs the Adaptiva Remote Version table. |
 | `log_osd_catalog` | `pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry])` | Logs OSD Catalog Core, Details, and Summary tables. |
 | `log_target_comparisons` | `pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow])` | Logs Installed vs OSD Summary and Details tables; Details includes the `install_args` column. |
