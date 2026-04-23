@@ -84,6 +84,7 @@ struct AppConfig {
     version_source_url: String,
     adaptiva_version_url: String,
     download_dir: PathBuf,
+    variables_dir: PathBuf,
 }
 
 #[derive(Debug, Clone)]
@@ -127,11 +128,21 @@ impl AppConfig {
                     .unwrap_or_else(|_| PathBuf::from("."))
                     .join("cdk-updater-downloads")
             });
+        let variables_dir = env::var("VARIABLES_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+                    .unwrap_or_else(|| PathBuf::from("."))
+                    .join("cdk-updater-variables")
+            });
 
         Ok(Self {
             version_source_url,
             adaptiva_version_url,
             download_dir,
+            variables_dir,
         })
     }
 }
@@ -153,11 +164,13 @@ fn main() -> Result<()> {
         app_mode_as_str(&mode),
         &config.version_source_url,
         config.download_dir.to_string_lossy().as_ref(),
+        config.variables_dir.to_string_lossy().as_ref(),
     );
 
     //=-- Gather and display current CDK installation state before processing targets.
     let cdk_info = cdk_info::gather();
     app_logging::log_cdk_info_summary(&cdk_info);
+    write_cdk_info_variables(&cdk_info, &config.variables_dir)?;
 
     let catalog = fetch_software_catalog(&config.version_source_url)?;
     let mut catalog = catalog;
@@ -756,6 +769,46 @@ fn capitalize_first(s: &str) -> String {
         None => String::new(),
         Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
     }
+}
+
+/// Writes each CDK Installation Info check result to an individual `.txt` file in `dir`.
+///
+/// The filename is derived from the check label by replacing non-alphanumeric, non-dot,
+/// non-hyphen characters with underscores and collapsing consecutive underscores.
+/// The file contents are the result value only, with no trailing newline.
+fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> {
+    fs::create_dir_all(dir)
+        .with_context(|| format!("failed to create variables directory: {}", dir.display()))?;
+
+    for (check, result) in &app_logging::cdk_info_entries(info) {
+        let filename = format!("{}.txt", to_safe_filename(check));
+        let file_path = dir.join(&filename);
+        fs::write(&file_path, result)
+            .with_context(|| format!("failed to write variable file: {}", file_path.display()))?;
+    }
+
+    Ok(())
+}
+
+/// Converts a check label into a Windows-safe filename token.
+///
+/// Alphanumeric characters, hyphens, and dots are kept as-is.
+/// Any other character (spaces, parentheses, backslashes, etc.) is replaced
+/// by an underscore; consecutive underscores are collapsed to one.
+/// Leading and trailing underscores are trimmed.
+fn to_safe_filename(name: &str) -> String {
+    let mut result = String::with_capacity(name.len());
+    let mut last_was_underscore = false;
+    for c in name.chars() {
+        if c.is_alphanumeric() || c == '.' || c == '-' {
+            result.push(c);
+            last_was_underscore = false;
+        } else if !last_was_underscore {
+            result.push('_');
+            last_was_underscore = true;
+        }
+    }
+    result.trim_matches('_').to_string()
 }
 
 #[cfg(test)]
