@@ -5,21 +5,21 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 ## Data Flow
 
 1. `main()` loads `.env` with `dotenvy::dotenv().ok()`.
-2. `main()` calls `init_logging()`, which resolves `LOG_DIR`, creates the log directory, opens a timestamped log file, and configures `fern` to write to stdout and the file.
-3. `AppConfig::from_env()` reads `CDK_DRIVE_OSD_URL`, `ADAPTIVA_VERSION_URL`, and `DOWNLOAD_DIR`.
+2. `main()` calls `init_logging()`, which resolves `LOG_DIR` through `utils::env_path_or_else()`, creates the log directory, opens a timestamped log file, and configures `fern` to write to stdout and the file.
+3. `AppConfig::from_env()` reads `CDK_DRIVE_OSD_URL`, `ADAPTIVA_VERSION_URL`, `DOWNLOAD_DIR`, and `VARIABLES_DIR`.
 4. `AppMode::from_args(&args[1..])` parses the CLI mode. Query mode is the default.
 5. `app_logging::log_app_mode()` and `app_logging::log_startup_summary()` emit the initial runtime tables.
 6. `cdk_info::gather()` collects registry, filesystem, Adaptiva, SIA, URL-handler, and WebStart version state.
 7. `app_logging::log_cdk_info_summary()` logs the gathered CDK installation snapshot.
-8. `write_cdk_info_variables()` writes each CDK Installation Info check result to a lowercased `.txt` file in `VARIABLES_DIR`, a `summary.txt` containing the full table, and a `last-run--<timestamp>--<epoch>.txt` marker file.
+8. `write_cdk_info_variables()` writes each CDK Installation Info check result to a lowercased `.txt` file in `VARIABLES_DIR`, a `summary.txt` containing the full table, and a `last-run.txt` marker file whose content is `<timestamp>--<epoch>`.
 9. `fetch_software_catalog()` performs an HTTP GET for the OSD URL and passes the response HTML plus final response URL to `parse_software_catalog()`.
 10. `parse_software_catalog()` reads OSD category sections and adjacent tables into `Vec<SoftwareEntry>`.
 11. `fetch_adaptiva_version()` performs an HTTP GET for the Adaptiva version text file.
-12. If a remote Adaptiva version is available, `main()` updates the existing Adaptiva catalog entry or appends a synthetic one.
+12. If a remote Adaptiva version is available, `merge_adaptiva_catalog_entry()` updates the existing Adaptiva catalog entry or appends a synthetic one.
 13. `app_logging::log_adaptiva_remote_version()` and `app_logging::log_osd_catalog()` log the remote Adaptiva source and full catalog.
 14. `main()` iterates `TARGET_SOFTWARES`, calling `process_target()` once per target.
 15. `process_target()` calls the target's detection function, compares against the OSD catalog, and either describes (query) or executes (update) the install action via `perform_or_describe_install()`.
-16. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, terminates `wsStart_4.exe` with `kill_process_if_running()`, waits 20 seconds, terminates `wsStartChrome.exe` with `kill_process_if_running()`, runs the installer with `run_installer()`, deletes the downloaded file, and returns an outcome string.
+16. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, terminates `wsStart_4.exe` with `kill_process_if_running()`, waits 20 seconds only when that process was killed, terminates `wsStartChrome.exe` with `kill_process_if_running()`, runs the installer with `run_installer()`, deletes the downloaded file, and returns an outcome string.
 17. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
 18. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
@@ -57,7 +57,7 @@ Release artifact rule: `dist/cdk-drive-updater.exe` is the intended slim distrib
 
 ## `main.rs`
 
-Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieval, OSD HTML parsing, target orchestration, version comparison, and logger initialization.
+Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieval, OSD HTML parsing, target orchestration, version comparison through `utils`, and logger initialization.
 
 ### Types
 
@@ -66,14 +66,19 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>`; `install_args_env_var: Option<&'static str>` | Static target definition used by `process_target()`. `install_args_env_var` is `None` for targets this tool does not install (Adaptiva). |
 | `AppMode` | private | `Query`; `Update` | Runtime mode parsed from CLI arguments. |
 | `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String`; `download_dir: PathBuf`; `variables_dir: PathBuf` | Environment-derived application configuration. |
-| `SoftwareEntry` | private crate root type | `category: String`; `description: String`; `version_number: String`; `file_version: String`; `silent_install_arguments: String`; `download_link: String` | Parsed OSD catalog row or synthetic Adaptiva row. |
+| `SoftwareEntry` | private crate root type | `category: String`; `description: String`; `version_number: String`; `file_version: String`; `silent_install_arguments: String`; `download_link: String` | Parsed OSD catalog row or synthetic Adaptiva row. `preferred_version()` returns `file_version` when present, otherwise `version_number`; `adaptiva()` builds the synthetic Adaptiva entry. |
+| `CatalogColumns` | private | Optional indexes for description, version, silent-install arguments, and download columns; `version_is_file_version: bool` | Header map used by `parse_software_catalog()` so table parsing does not duplicate column-index logic. |
 | `VersionState` | private | `NeedsUpdate`; `Newer`; `Same` | Comparison result for an installed version against an OSD version. |
 | `SoftwareComparison` | private | `description: String`; `version: String`; `state: VersionState`; `download_link: String`; `silent_install_arguments: String` | Normalized comparison data returned by `compare_software_version()`. |
+| `TargetRowDetails` | private | `osd_description`; `installed_version`; `osd_version`; `state`; `action`; `download_link`; `note`; `install_args` | Detail payload consumed by `target_row()` so target identity is filled in one place without a many-argument helper. |
 
 ### Constants
 
 | Constant | Value |
 | --- | --- |
+| `ADAPTIVA_OSD_DESCRIPTION` | `CDK Software Install Agent ( Adaptiva )`. |
+| `NOT_INSTALLED` | `Not installed`. |
+| `NOT_FOUND_ON_OSD` | `Not found on OSD`. |
 | `TARGET_SOFTWARES` | Four `TargetSoftware` entries processed in order. |
 
 ### Target Software Table
@@ -93,41 +98,43 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `AppMode::from_args` | `fn from_args(args: &[String]) -> Self` | Parses `/query`, `--query`, `-query`, `/update`, `--update`, or `-update`, case-insensitively; defaults to query. |
 | `AppConfig::from_env` | `fn from_env() -> Result<Self>` | Reads required and optional environment variables, including `VARIABLES_DIR` defaulting to `<exe dir>/cdk-updater-variables`. |
 | `app_mode_as_str` | `fn app_mode_as_str(mode: &AppMode) -> &'static str` | Converts `AppMode` to `query` or `update` for logs. |
-| `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo, config: &AppConfig) -> Result<TargetComparisonRow>` | Detects a target's installed version, compares it to the OSD catalog, and calls `perform_or_describe_install()` for any target that needs install or update. |
+| `merge_adaptiva_catalog_entry` | `fn merge_adaptiva_catalog_entry(catalog: &mut Vec<SoftwareEntry>, adaptiva_version: String)` | Updates the OSD Adaptiva entry when present or appends a synthetic Adaptiva entry. |
+| `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo, config: &AppConfig) -> Result<TargetComparisonRow>` | Detects a target's installed version, then delegates row creation to `installed_target_row()` or `missing_target_row()`. |
+| `installed_target_row` | `fn installed_target_row(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, product: installed::InstalledProduct, config: &AppConfig) -> TargetComparisonRow` | Builds the comparison row for an installed target, including update action when the OSD version is newer. |
+| `missing_target_row` | `fn missing_target_row(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, config: &AppConfig) -> TargetComparisonRow` | Builds the comparison row for a missing target, including install action when the OSD entry exists. |
+| `current_target_action` | `fn current_target_action(mode: &AppMode, target: &TargetSoftware, osd_args: &str) -> (String, String)` | Returns `"No update required"` and, in query mode, the install args that would be used later. |
+| `target_row` | `fn target_row(target: &TargetSoftware, details: TargetRowDetails) -> TargetComparisonRow` | Shared row constructor that fills the repeated target identity fields consistently. |
+| `resolve_target_install_args` | `fn resolve_target_install_args(target: &TargetSoftware, osd_args: &str) -> String` | Returns a non-empty ENV override when present, OSD args otherwise, or an empty string for externally managed targets. |
 | `perform_or_describe_install` | `fn perform_or_describe_install(target: &TargetSoftware, mode: &AppMode, download_link: &str, osd_args: &str, config: &AppConfig, operation: &str) -> (String, String)` | Returns `(action, install_args)`. In query mode, returns a description of what would happen. In update mode, calls `actually_install()` and returns the outcome. Targets with `install_args_env_var = None` return an external-management message. |
-| `actually_install` | `fn actually_install(url: &str, args: &str, download_dir: &Path) -> String` | Downloads the installer; kills `wsStart_4.exe`, waits 20 s, kills `wsStartChrome.exe`; runs the installer; deletes the file; returns a human-readable outcome string. |
+| `actually_install` | `fn actually_install(url: &str, args: &str, download_dir: &Path) -> String` | Downloads the installer; kills `wsStart_4.exe` and waits 20 s only if it was killed; kills `wsStartChrome.exe`; runs the installer; deletes the file; returns a human-readable outcome string. |
 | `kill_process_if_running` | `fn kill_process_if_running(process_name: &str)` | Runs `taskkill /F /IM <name>`; logs success, not-running (exit 128), or failure. |
 | `download_installer` | `fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf>` | GETs the installer URL, checks HTTP status, writes the body to `download_dir/<filename>`, and returns the path. |
 | `run_installer` | `fn run_installer(path: &Path, args: &str) -> Result<std::process::ExitStatus>` | Splits `args` with `split_install_args()` and runs the installer via `Command::new`, waiting for completion. |
 | `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
 | `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
-| `capitalize_first` | `fn capitalize_first(s: &str) -> String` | Uppercases the first character of a string slice. |
-| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`; iterates `app_logging::cdk_info_entries(info)`, calling `delete_if_exists` before writing each lowercased `<to_safe_filename(check)>.txt`; deletes then writes `summary.txt`; deletes then writes `last-run.txt` whose content is `<build_timestamp(now)>--<epoch>`. |
-| `delete_if_exists` | `fn delete_if_exists(path: &Path)` | Deletes `path` when it exists; logs a warning on deletion or existence-check failure rather than propagating the error. |
-| `to_safe_filename` | `fn to_safe_filename(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with underscores, collapses consecutive underscores, trims leading/trailing underscores, and lowercases the result. |
+| `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`; iterates `app_logging::cdk_info_entries(info)`, writing each lowercased `<utils::safe_filename_token(check)>.txt` via `utils::replace_file()`; writes `summary.txt`; writes `last-run.txt` whose content is `<utils::build_timestamp(now)>--<epoch>`. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
 | `parse_software_catalog` | `fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntry>>` | Parses OSD category/table markup into `SoftwareEntry` values. |
+| `CatalogColumns::from_header_row` | `fn from_header_row(header_row: ElementRef<'_>, header_selector: &Selector) -> Self` | Maps OSD table headers to reusable column indexes for catalog row parsing. |
 | `next_table_sibling` | `fn next_table_sibling(category_element: ElementRef<'_>) -> Option<ElementRef<'_>>` | Finds the table immediately following a category `div`. |
 | `collect_text` | `fn collect_text(element: ElementRef<'_>) -> String` | Normalizes all text within an element by collapsing whitespace. |
 | `value_at_index` | `fn value_at_index(cells: &[ElementRef<'_>], index: Option<usize>) -> String` | Returns normalized cell text for an optional column index. |
 | `resolve_link` | `fn resolve_link(base_url: &Url, href: &str) -> String` | Resolves relative download links against the final OSD response URL. |
 | `get_software_by_description` | `fn get_software_by_description<'a>(entries: &'a [SoftwareEntry], description: &str) -> Option<&'a SoftwareEntry>` | Finds a catalog entry by case-insensitive description. |
 | `compare_software_version` | `fn compare_software_version(entries: &[SoftwareEntry], description: &str, provided_version: &str) -> Option<SoftwareComparison>` | Compares an installed version to the matching catalog version. |
-| `compare_versions` | `fn compare_versions(provided: &str, target: &str) -> Ordering` | Uses `version_compare::compare`; falls back to trimmed string ordering when parsing fails. |
 | `version_state_as_str` | `fn version_state_as_str(state: &VersionState) -> &'static str` | Converts `VersionState` to the human log string. |
 | `init_logging` | `fn init_logging() -> Result<PathBuf>` | Creates the log path and configures stdout plus file logging. |
-| `build_timestamp` | `fn build_timestamp(now: chrono::DateTime<Local>) -> String` | Formats log filenames as `YYYY-MM-DD--H-MM-am/pm`. |
 
 ### Key Algorithms
 
-HTML catalog parsing: `parse_software_catalog()` selects `div.category` elements, finds each adjacent `table`, maps table headers by lowercase text (`description`, `version`, `file version`, `silent install arguments`, `download`/`link`), skips rows without a description, resolves anchor `href` values against the final response URL, and treats a `File Version` header as both `version_number` and `file_version`.
+HTML catalog parsing: `parse_software_catalog()` selects `div.category` elements, finds each adjacent `table`, uses `CatalogColumns` to map table headers by lowercase text (`description`, `version`, `file version`, `silent install arguments`, `download`/`link`), skips rows without a description, resolves anchor `href` values against the final response URL, and treats a `File Version` header as both `version_number` and `file_version`.
 
-Version comparison ordering: `compare_versions()` delegates to `version_compare::compare()` and maps `Lt`, `Gt`, and `Eq` to `std::cmp::Ordering`; if the crate cannot compare the strings, it compares trimmed strings lexicographically.
+Version comparison ordering: `compare_software_version()` delegates ordering to `utils::compare_versions()`, which maps `version_compare` results to `std::cmp::Ordering` and falls back to trimmed string ordering when parsing fails.
 
-Update mode behavior: `process_target()` delegates install/update decisions to `perform_or_describe_install()`. For targets with `install_args_env_var = None` (Adaptiva), both modes return an external-management message and no download occurs. For installable targets in query mode, the action is `"Would download and install/update"` and the resolved args (ENV override or OSD args) are shown in `install_args`. In update mode, `actually_install()` is called: it downloads the installer to `DOWNLOAD_DIR`; then kills `wsStart_4.exe` via `taskkill /F /IM`, waits 20 seconds, and kills `wsStartChrome.exe` via `taskkill /F /IM`; then runs the installer via `Command::new` with `split_install_args()` tokens; deletes the file (even on failure); and returns an outcome such as `"Installed (exit code: 0)"` or `"Install failed (exit code: N)"`. Targets that are current or newer in any mode produce `"No update required"`.
+Update mode behavior: `process_target()` delegates installed/missing cases to row helpers, which delegate install/update decisions to `perform_or_describe_install()`. For targets with `install_args_env_var = None` (Adaptiva), both modes return an external-management message and no download occurs. For installable targets in query mode, the action is `"Would download and install/update"` and the resolved args (ENV override or OSD args) are shown in `install_args`. In update mode, `actually_install()` is called: it downloads the installer to `DOWNLOAD_DIR`; kills `wsStart_4.exe` via `taskkill /F /IM` and waits 20 seconds only when that process was killed; kills `wsStartChrome.exe` via `taskkill /F /IM`; runs the installer via `Command::new` with `split_install_args()` tokens; deletes the file (even on failure); and returns an outcome such as `"Installed (exit code: 0)"` or `"Install failed (exit code: N)"`. Targets that are current or newer in any mode produce `"No update required"`.
 
-Pre-install process termination: `kill_process_if_running()` calls `taskkill /F /IM <name>`. A zero exit from `taskkill` is logged as a successful kill. Exit code 128 means the process was not running and is logged at info level without warning. Any other non-zero exit or launch failure is logged as a warning. The 20-second sleep between the two kills is a fixed unconditional wait.
+Pre-install process termination: `kill_process_if_running()` calls `taskkill /F /IM <name>`. A zero exit from `taskkill` is logged as a successful kill and returns `true`. Exit code 128 means the process was not running and is logged at info level without warning. Any other non-zero exit or launch failure is logged as a warning. The 20-second sleep runs only after `wsStart_4.exe` was found and killed.
 
 ## `installed.rs`
 
@@ -168,6 +175,9 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 
 | Function | Signature | Description |
 | --- | --- | --- |
+| `InstalledProduct::new` | `fn new(product_name: impl Into<String>, version: impl Into<String>) -> Self` | Internal constructor used by registry, executable, and cached-report detectors. |
+| `installed_products_from_executables` | `fn installed_products_from_executables(component_name: &str, executable_paths: Vec<PathBuf>) -> Vec<InstalledProduct>` | Reads file versions from executable paths, logs unreadable files, and returns installed-product rows. |
+| `product_from_reported_version` | `fn product_from_reported_version(product_name: &str, version: &str) -> Option<InstalledProduct>` | Converts cached CDK info version strings into installed products unless the value is empty or a known not-found token. |
 | `find_bluezone_executables` | `fn find_bluezone_executables() -> Vec<PathBuf>` | Walks `BlueZone` directories under Program Files roots looking for `bzvt.exe`. |
 | `find_adaptiva_executables` | `fn find_adaptiva_executables() -> Vec<PathBuf>` | Checks expected Adaptiva `OneSiteClient.exe` paths under Program Files roots. |
 | `candidate_program_files_roots` | `fn candidate_program_files_roots() -> Vec<PathBuf>` | Combines Program Files environment variables with fixed fallback paths, sorted and deduplicated. |
@@ -176,7 +186,6 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 | `select_highest_version` | `fn select_highest_version(mut matches: Vec<InstalledProduct>) -> Option<InstalledProduct>` | Sorts descending by version and returns the first product. |
 | `decode_msi_version` | `fn decode_msi_version(product_name: &str, version_int: u32) -> String` | Extracts `V-` versions from product names before falling back to MSI DWORD decoding. |
 | `extract_version_from_name` | `fn extract_version_from_name(name: &str) -> Option<String>` | Extracts dot-separated digits after `V-` when the result contains at least one dot. |
-| `compare_version_strings` | `fn compare_version_strings(a: &str, b: &str) -> Ordering` | Uses `version_compare`; falls back to string comparison. |
 
 ### Key Algorithms
 
@@ -186,7 +195,7 @@ MSI version decoding: `get_installed_version()` scans `HKEY_CLASSES_ROOT\Install
 
 Executable file version reading: `read_executable_file_version()` converts the path to UTF-16, calls `GetFileVersionInfoSizeW`, loads the version resource with `GetFileVersionInfoW`, queries the root block with `VerQueryValueW`, casts to `VS_FIXEDFILEINFO`, and formats `dwFileVersionMS` / `dwFileVersionLS` as `major.minor.build.revision`.
 
-Highest-version selection: detected products are sorted descending with `compare_version_strings()`, then the first entry is used. Adaptiva prefers executable metadata over Add/Remove MSI data because `get_adaptiva_installed_version()` returns `executable_match.or(add_remove_match)`.
+Highest-version selection: detected products are sorted descending with `utils::compare_versions()`, then the first entry is used. Adaptiva prefers executable metadata over Add/Remove MSI data because `get_adaptiva_installed_version()` returns `executable_match.or(add_remove_match)`.
 
 ## `cdk_info.rs`
 
@@ -225,6 +234,15 @@ Purpose: gather a single local snapshot of CDK-specific registry keys, Adaptiva 
 | `webstart_version` | `String` | File version of `CDK Drive WebStart.exe`, or `NotFound`. |
 | `webstart_add_remove_version` | `String` | Add/Remove Programs (MSI registry) version for `CDK Drive WebStart`, or `NotFound`. |
 
+### Constants
+
+| Constant group | Description |
+| --- | --- |
+| `ADAPTIVA_CLIENT_NATIVE`, `ADAPTIVA_CLIENT_WOW` | Native and WOW6432Node Adaptiva client registry paths reused by all Adaptiva value reads. |
+| `CDK_ADAPTIVA_NATIVE`, `CDK_ADAPTIVA_WOW` | Native and WOW6432Node CDK Adaptiva registry paths used for recursive value capture. |
+| `WEBSTART_EXE_PATH` | Fixed path for `CDK Drive WebStart.exe` executable version reading. |
+| `SIA_DIR`, `SIA_XML_PATH`, `SIA_FIX_PATH` | Fixed SIA filesystem paths checked by `gather()`. |
+
 ### Public Functions
 
 | Function | Signature | Description |
@@ -235,6 +253,9 @@ Purpose: gather a single local snapshot of CDK-specific registry keys, Adaptiva 
 
 | Function | Signature | Description |
 | --- | --- | --- |
+| `read_adaptiva_client_value_pair` | `fn read_adaptiva_client_value_pair(hive: &RegKey, value_name: &str) -> (String, String)` | Reads a named Adaptiva client value from both native and WOW6432Node registry paths. |
+| `read_webstart_executable_version` | `fn read_webstart_executable_version() -> String` | Reads the WebStart executable file version or returns `utils::NOT_FOUND_COMPACT`. |
+| `read_webstart_add_remove_version` | `fn read_webstart_add_remove_version() -> String` | Reads the WebStart Add/Remove MSI version or returns `utils::NOT_FOUND_COMPACT`. |
 | `registry_value_check` | `fn registry_value_check(hive: &RegKey, subkey: &str, value_name: &str) -> RegistryCheckStatus` | Distinguishes missing key, existing key with named value, and existing key without named value. |
 | `read_key_values_recursive` | `fn read_key_values_recursive(hive: &RegKey, subkey: &str) -> Option<Vec<(String, String)>>` | Opens a key and collects all named values from it and descendant subkeys. |
 | `collect_key_values` | `fn collect_key_values(key: &RegKey, prefix: &str, out: &mut Vec<(String, String)>)` | Recursive worker for registry value enumeration. |
@@ -250,6 +271,33 @@ Registry value checking: `registry_value_check()` opens the key, enumerates valu
 Recursive Adaptiva key capture: `read_key_values_recursive()` returns `None` when the root key is absent. When present, `collect_key_values()` includes root values and subkey values, labeling subkey entries as `SubKey\ValueName`.
 
 Registry value formatting: `format_reg_value()` decodes `REG_SZ` and `REG_EXPAND_SZ` as UTF-16 strings, `REG_DWORD` and `REG_QWORD` as numbers, `REG_MULTI_SZ` as strings joined with ` | `, and unknown types as hex bytes.
+
+## `utils.rs`
+
+Purpose: shared helpers for behavior that is needed by multiple modules or was previously repeated inside `main.rs`, `installed.rs`, and `cdk_info.rs`.
+
+### Constants
+
+| Constant | Value | Description |
+| --- | --- | --- |
+| `NOT_FOUND_COMPACT` | `NotFound` | Compact not-found token used by cached version fields. |
+| `NOT_FOUND_DISPLAY` | `Not Found` | Human-readable not-found token used in tables and registry string reads. |
+
+### Functions
+
+| Function | Signature | Description |
+| --- | --- | --- |
+| `cwd_child` | `fn cwd_child(name: &str) -> PathBuf` | Returns `<cwd>/<name>`, falling back to `.` when cwd cannot be read. |
+| `exe_dir_child` | `fn exe_dir_child(name: &str) -> PathBuf` | Returns `<exe dir>/<name>`, falling back to `.` when the executable directory cannot be read. |
+| `env_path_or_else` | `fn env_path_or_else(var_name: &str, default: impl FnOnce() -> PathBuf) -> PathBuf` | Reads a non-empty path environment variable or returns the supplied default path. |
+| `non_empty_env_var` | `fn non_empty_env_var(var_name: &str) -> Option<String>` | Reads and trims an environment variable, returning `None` for missing or empty values. |
+| `compare_versions` | `fn compare_versions(left: &str, right: &str) -> Ordering` | Uses `version_compare`; falls back to trimmed string ordering when parsing fails. |
+| `is_missing_value` | `fn is_missing_value(value: &str) -> bool` | Returns true for empty strings, `NotFound`, or `Not Found`, case-insensitively. |
+| `replace_file` | `fn replace_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()>` | Deletes an existing file via `delete_if_exists()` and writes new contents with path context. |
+| `delete_if_exists` | `fn delete_if_exists(path: &Path)` | Deletes `path` when it exists; logs warnings on deletion or existence-check failure. |
+| `safe_filename_token` | `fn safe_filename_token(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with collapsed underscores, trims underscores, and lowercases the result. |
+| `capitalize_first` | `fn capitalize_first(value: &str) -> String` | Uppercases the first character of a string slice. |
+| `build_timestamp` | `fn build_timestamp(now: chrono::DateTime<Local>) -> String` | Formats timestamps as `YYYY-MM-DD--H-MM-am/pm` for log filenames and marker content. |
 
 ## `app_logging.rs`
 
@@ -278,16 +326,18 @@ Purpose: structured logging and ASCII table rendering for runtime, CDK snapshot,
 
 | Function | Signature | Description |
 | --- | --- | --- |
+| `check_row` | `fn check_row(label: &str, value: impl Into<String>) -> (String, String)` | Shared constructor for CDK Installation Info rows. |
 | `expand_key_value_rows` | `fn expand_key_value_rows(label: &str, values: &Option<Vec<(String, String)>>, rows: &mut Vec<(String, String)>)` | Expands optional registry value vectors into `(check, result)` pairs for `cdk_info_entries`. |
 | `build_ascii_table` | `fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String` | Builds a titled ASCII table with separators, header row, and data rows. |
 | `build_ascii_row` | `fn build_ascii_row(cells: &[String], widths: &[usize]) -> String` | Renders one padded pipe-delimited table row. |
 | `compute_widths` | `fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize>` | Computes per-column widths from headers and row content. |
+| `clean_table_cell` | `fn clean_table_cell(cell: &str) -> String` | Normalizes embedded CR/LF characters to spaces before measuring or rendering table cells. |
 | `build_separator` | `fn build_separator(widths: &[usize]) -> String` | Builds a `+---+` separator row. |
 
 ### Key Algorithms
 
 ASCII table rendering: `build_ascii_table()` computes max widths across headers and rows, emits the title and blank line, renders separators around the header and every row, normalizes embedded CR/LF characters to spaces, and returns a string ending with two newlines.
 
-Catalog logging: `log_osd_catalog()` emits a compact Core table using `file_version` when present and `version_number` otherwise, a Details table containing silent install arguments and download links, and a Summary table containing total entry count.
+Catalog logging: `log_osd_catalog()` emits a compact Core table using `SoftwareEntry::preferred_version()`, a Details table containing silent install arguments and download links, and a Summary table containing total entry count.
 
 Target comparison logging: `log_target_comparisons()` splits each `TargetComparisonRow` into a Summary table for target/version/state/action and a Details table for download links and notes.
