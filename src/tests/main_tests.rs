@@ -87,8 +87,8 @@ fn parses_catalog_entries_from_category_tables() {
         "https://servdemo.cdk.com/apps/autoTools/cds/osd/terminal/bluezone/index.php"
     );
 
-    let webstart = get_software_by_description(&entries, "CDK Drive WebStart")
-        .expect("webstart entry exists");
+    let webstart =
+        get_software_by_description(&entries, "CDK Drive WebStart").expect("webstart entry exists");
     assert_eq!(webstart.file_version, "7.4.2.19");
     assert_eq!(
         webstart.download_link,
