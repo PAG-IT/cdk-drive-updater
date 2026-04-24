@@ -94,7 +94,7 @@ pub(crate) fn safe_filename_token(name: &str) -> String {
         }
     }
 
-    result.trim_matches('_').to_string().to_ascii_lowercase()
+    result.trim_matches('_').to_ascii_lowercase()
 }
 
 pub(crate) fn capitalize_first(value: &str) -> String {
