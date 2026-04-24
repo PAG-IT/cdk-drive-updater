@@ -1,4 +1,3 @@
-use std::cmp::Ordering;
 use std::env;
 use std::fs;
 use std::io::{Read, Write};
@@ -6,16 +5,20 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 mod app_logging;
-mod installed;
 mod cdk_info;
+mod installed;
+mod utils;
 
 use app_logging::TargetComparisonRow;
+use utils::{
+    build_timestamp, capitalize_first, compare_versions, cwd_child, env_path_or_else,
+    exe_dir_child, non_empty_env_var, replace_file, safe_filename_token,
+};
 
 use anyhow::{Context, Result};
-use chrono::{Local, Timelike};
+use chrono::Local;
 use reqwest::Url;
 use scraper::{ElementRef, Html, Selector};
-use version_compare::Cmp;
 
 struct TargetSoftware {
     installed_name: &'static str,
@@ -24,6 +27,10 @@ struct TargetSoftware {
     //=-- ENV var name that overrides the OSD silent install arguments; None = no automated install.
     install_args_env_var: Option<&'static str>,
 }
+
+const ADAPTIVA_OSD_DESCRIPTION: &str = "CDK Software Install Agent ( Adaptiva )";
+const NOT_INSTALLED: &str = "Not installed";
+const NOT_FOUND_ON_OSD: &str = "Not found on OSD";
 
 const TARGET_SOFTWARES: [TargetSoftware; 4] = [
     TargetSoftware {
@@ -34,7 +41,7 @@ const TARGET_SOFTWARES: [TargetSoftware; 4] = [
     },
     TargetSoftware {
         installed_name: "Adaptiva",
-        osd_description: "CDK Software Install Agent ( Adaptiva )",
+        osd_description: ADAPTIVA_OSD_DESCRIPTION,
         detect_installed: installed::detect_adaptiva,
         //=-- Adaptiva is managed externally (CDK SIA); this tool does not install it.
         install_args_env_var: None,
@@ -98,6 +105,27 @@ struct SoftwareEntry {
     download_link: String,
 }
 
+impl SoftwareEntry {
+    pub(crate) fn preferred_version(&self) -> &str {
+        if self.file_version.is_empty() {
+            &self.version_number
+        } else {
+            &self.file_version
+        }
+    }
+
+    fn adaptiva(version: String) -> Self {
+        Self {
+            category: "Adaptiva".to_string(),
+            description: ADAPTIVA_OSD_DESCRIPTION.to_string(),
+            version_number: version.clone(),
+            file_version: version,
+            silent_install_arguments: String::new(),
+            download_link: String::new(),
+        }
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 enum VersionState {
@@ -116,28 +144,26 @@ struct SoftwareComparison {
     silent_install_arguments: String,
 }
 
+struct TargetRowDetails {
+    osd_description: String,
+    installed_version: String,
+    osd_version: String,
+    state: String,
+    action: String,
+    download_link: String,
+    note: String,
+    install_args: String,
+}
+
 impl AppConfig {
     fn from_env() -> Result<Self> {
-        let version_source_url = env::var("CDK_DRIVE_OSD_URL")
-            .context("missing env var CDK_DRIVE_OSD_URL")?;
+        let version_source_url =
+            env::var("CDK_DRIVE_OSD_URL").context("missing env var CDK_DRIVE_OSD_URL")?;
         let adaptiva_version_url = env::var("ADAPTIVA_VERSION_URL")
             .unwrap_or_else(|_| "https://raw.githubusercontent.com/PAG-IT/public-configs/refs/heads/main/cdk--drive--adaptiva-version.txt".to_string());
-        let download_dir = env::var("DOWNLOAD_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                env::current_dir()
-                    .unwrap_or_else(|_| PathBuf::from("."))
-                    .join("cdk-updater-downloads")
-            });
-        let variables_dir = env::var("VARIABLES_DIR")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| {
-                env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-                    .unwrap_or_else(|| PathBuf::from("."))
-                    .join("cdk-updater-variables")
-            });
+        let download_dir = env_path_or_else("DOWNLOAD_DIR", || cwd_child("cdk-updater-downloads"));
+        let variables_dir =
+            env_path_or_else("VARIABLES_DIR", || exe_dir_child("cdk-updater-variables"));
 
         Ok(Self {
             version_source_url,
@@ -180,29 +206,18 @@ fn main() -> Result<()> {
             log::warn!("Failed to fetch remote Adaptiva version: {}", e);
             None
         });
-    app_logging::log_adaptiva_remote_version(&config.adaptiva_version_url, &adaptiva_remote_version);
+    app_logging::log_adaptiva_remote_version(
+        &config.adaptiva_version_url,
+        &adaptiva_remote_version,
+    );
     if let Some(adaptiva_version) = adaptiva_remote_version {
-        let adaptiva_description = "CDK Software Install Agent ( Adaptiva )";
-        //=-- Search for existing Adaptiva entry in catalog and update it; if not found, append.
-        if let Some(entry) = catalog.iter_mut().find(|e| e.description == adaptiva_description) {
-            entry.version_number = adaptiva_version.clone();
-            entry.file_version = adaptiva_version;
-        } else {
-            catalog.push(SoftwareEntry {
-                category: "Adaptiva".to_string(),
-                description: adaptiva_description.to_string(),
-                version_number: adaptiva_version.clone(),
-                file_version: adaptiva_version,
-                silent_install_arguments: String::new(),
-                download_link: String::new(),
-            });
-        }
+        merge_adaptiva_catalog_entry(&mut catalog, adaptiva_version);
     }
     app_logging::log_osd_catalog(&catalog);
 
     let mut comparison_rows = Vec::new();
-    for target in TARGET_SOFTWARES {
-        comparison_rows.push(process_target(&catalog, mode.clone(), &target, &cdk_info, &config)?);
+    for target in &TARGET_SOFTWARES {
+        comparison_rows.push(process_target(&catalog, &mode, target, &cdk_info, &config)?);
     }
     app_logging::log_target_comparisons(&comparison_rows);
 
@@ -216,100 +231,157 @@ fn app_mode_as_str(mode: &AppMode) -> &'static str {
     }
 }
 
+fn merge_adaptiva_catalog_entry(catalog: &mut Vec<SoftwareEntry>, adaptiva_version: String) {
+    if let Some(entry) = catalog.iter_mut().find(|entry| {
+        entry
+            .description
+            .eq_ignore_ascii_case(ADAPTIVA_OSD_DESCRIPTION)
+    }) {
+        entry.version_number = adaptiva_version.clone();
+        entry.file_version = adaptiva_version;
+    } else {
+        catalog.push(SoftwareEntry::adaptiva(adaptiva_version));
+    }
+}
+
 fn process_target(
     entries: &[SoftwareEntry],
-    mode: AppMode,
+    mode: &AppMode,
     target: &TargetSoftware,
     cdk_info: &cdk_info::CdkInfo,
     config: &AppConfig,
 ) -> Result<TargetComparisonRow> {
     let installed = (target.detect_installed)(cdk_info)?;
-    match installed {
-        Some(product) => {
-            if let Some(result) = compare_software_version(entries, target.osd_description, &product.version) {
-                let (action, install_args) = if matches!(result.state, VersionState::NeedsUpdate) {
-                    perform_or_describe_install(
-                        target, &mode,
-                        &result.download_link,
-                        &result.silent_install_arguments,
-                        config, "update",
-                    )
-                } else {
-                    //=-- In query mode, still resolve install args so the table shows exactly
-                    //=-- what would be used if this target ever needed updating.
-                    let args = if mode == AppMode::Query {
-                        resolve_target_install_args(target, &result.silent_install_arguments)
-                    } else {
-                        String::new()
-                    };
-                    ("No update required".to_string(), args)
-                };
+    let row = match installed {
+        Some(product) => installed_target_row(entries, mode, target, product, config),
+        None => missing_target_row(entries, mode, target, config),
+    };
+    Ok(row)
+}
 
-                Ok(TargetComparisonRow {
-                    target: target.installed_name.to_string(),
-                    osd_description: result.description,
-                    installed_version: product.version,
-                    osd_version: result.version,
-                    state: version_state_as_str(&result.state).to_string(),
-                    action,
-                    download_link: result.download_link,
-                    note: String::new(),
-                    install_args,
-                })
-            } else {
-                Ok(TargetComparisonRow {
-                    target: target.installed_name.to_string(),
-                    osd_description: target.osd_description.to_string(),
-                    installed_version: product.version,
-                    osd_version: "Not found on OSD".to_string(),
-                    state: "Unknown".to_string(),
-                    action: "Cannot compare".to_string(),
-                    download_link: String::new(),
-                    note: "OSD comparison skipped: target software not found on page".to_string(),
-                    install_args: String::new(),
-                })
-            }
-        }
-        None => {
-            if let Some(entry) = get_software_by_description(entries, target.osd_description) {
-                let osd_version = if entry.file_version.is_empty() {
-                    entry.version_number.clone()
-                } else {
-                    entry.file_version.clone()
-                };
+fn installed_target_row(
+    entries: &[SoftwareEntry],
+    mode: &AppMode,
+    target: &TargetSoftware,
+    product: installed::InstalledProduct,
+    config: &AppConfig,
+) -> TargetComparisonRow {
+    if let Some(result) =
+        compare_software_version(entries, target.osd_description, &product.version)
+    {
+        let (action, install_args) = if matches!(result.state, VersionState::NeedsUpdate) {
+            perform_or_describe_install(
+                target,
+                mode,
+                &result.download_link,
+                &result.silent_install_arguments,
+                config,
+                "update",
+            )
+        } else {
+            current_target_action(mode, target, &result.silent_install_arguments)
+        };
 
-                let (action, install_args) = perform_or_describe_install(
-                    target, &mode,
-                    &entry.download_link,
-                    &entry.silent_install_arguments,
-                    config, "install",
-                );
+        return target_row(
+            target,
+            TargetRowDetails {
+                osd_description: result.description,
+                installed_version: product.version,
+                osd_version: result.version,
+                state: version_state_as_str(&result.state).to_string(),
+                action,
+                download_link: result.download_link,
+                note: String::new(),
+                install_args,
+            },
+        );
+    }
 
-                Ok(TargetComparisonRow {
-                    target: target.installed_name.to_string(),
-                    osd_description: target.osd_description.to_string(),
-                    installed_version: "Not installed".to_string(),
-                    osd_version,
-                    state: "Missing".to_string(),
-                    action,
-                    download_link: entry.download_link.clone(),
-                    note: String::new(),
-                    install_args,
-                })
-            } else {
-                Ok(TargetComparisonRow {
-                    target: target.installed_name.to_string(),
-                    osd_description: target.osd_description.to_string(),
-                    installed_version: "Not installed".to_string(),
-                    osd_version: "Not found on OSD".to_string(),
-                    state: "Missing".to_string(),
-                    action: "Unavailable".to_string(),
-                    download_link: String::new(),
-                    note: "Target software not installed and not found on OSD page".to_string(),
-                    install_args: String::new(),
-                })
-            }
-        }
+    target_row(
+        target,
+        TargetRowDetails {
+            osd_description: target.osd_description.to_string(),
+            installed_version: product.version,
+            osd_version: NOT_FOUND_ON_OSD.to_string(),
+            state: "Unknown".to_string(),
+            action: "Cannot compare".to_string(),
+            download_link: String::new(),
+            note: "OSD comparison skipped: target software not found on page".to_string(),
+            install_args: String::new(),
+        },
+    )
+}
+
+fn missing_target_row(
+    entries: &[SoftwareEntry],
+    mode: &AppMode,
+    target: &TargetSoftware,
+    config: &AppConfig,
+) -> TargetComparisonRow {
+    if let Some(entry) = get_software_by_description(entries, target.osd_description) {
+        let (action, install_args) = perform_or_describe_install(
+            target,
+            mode,
+            &entry.download_link,
+            &entry.silent_install_arguments,
+            config,
+            "install",
+        );
+
+        return target_row(
+            target,
+            TargetRowDetails {
+                osd_description: target.osd_description.to_string(),
+                installed_version: NOT_INSTALLED.to_string(),
+                osd_version: entry.preferred_version().to_string(),
+                state: "Missing".to_string(),
+                action,
+                download_link: entry.download_link.clone(),
+                note: String::new(),
+                install_args,
+            },
+        );
+    }
+
+    target_row(
+        target,
+        TargetRowDetails {
+            osd_description: target.osd_description.to_string(),
+            installed_version: NOT_INSTALLED.to_string(),
+            osd_version: NOT_FOUND_ON_OSD.to_string(),
+            state: "Missing".to_string(),
+            action: "Unavailable".to_string(),
+            download_link: String::new(),
+            note: "Target software not installed and not found on OSD page".to_string(),
+            install_args: String::new(),
+        },
+    )
+}
+
+fn current_target_action(
+    mode: &AppMode,
+    target: &TargetSoftware,
+    osd_args: &str,
+) -> (String, String) {
+    let install_args = if mode == &AppMode::Query {
+        resolve_target_install_args(target, osd_args)
+    } else {
+        String::new()
+    };
+    ("No update required".to_string(), install_args)
+}
+
+fn target_row(target: &TargetSoftware, details: TargetRowDetails) -> TargetComparisonRow {
+    TargetComparisonRow {
+        target: target.installed_name.to_string(),
+        osd_description: details.osd_description,
+        installed_version: details.installed_version,
+        osd_version: details.osd_version,
+        state: details.state,
+        action: details.action,
+        download_link: details.download_link,
+        note: details.note,
+        install_args: details.install_args,
     }
 }
 
@@ -338,6 +410,72 @@ fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>> {
     parse_software_catalog(&html, &final_url)
 }
 
+#[derive(Default)]
+struct CatalogColumns {
+    description: Option<usize>,
+    version: Option<usize>,
+    silent_install_arguments: Option<usize>,
+    download: Option<usize>,
+    version_is_file_version: bool,
+}
+
+impl CatalogColumns {
+    fn from_header_row(header_row: ElementRef<'_>, header_selector: &Selector) -> Self {
+        let mut columns = Self::default();
+
+        for (index, header) in header_row
+            .select(header_selector)
+            .map(collect_text)
+            .enumerate()
+        {
+            let normalized = header.to_ascii_lowercase();
+            if normalized.contains("description") {
+                columns.description = Some(index);
+            }
+            if normalized.contains("version") {
+                columns.version = Some(index);
+                columns.version_is_file_version |= normalized.contains("file version");
+            }
+            if normalized.contains("silent install arguments") {
+                columns.silent_install_arguments = Some(index);
+            }
+            if normalized.contains("download") || normalized.contains("link") {
+                columns.download = Some(index);
+            }
+        }
+
+        columns
+    }
+
+    fn description(&self, cells: &[ElementRef<'_>]) -> String {
+        value_at_index(cells, self.description)
+    }
+
+    fn version(&self, cells: &[ElementRef<'_>]) -> String {
+        value_at_index(cells, self.version)
+    }
+
+    fn silent_install_arguments(&self, cells: &[ElementRef<'_>]) -> String {
+        value_at_index(cells, self.silent_install_arguments)
+    }
+
+    fn download_link(
+        &self,
+        cells: &[ElementRef<'_>],
+        link_selector: &Selector,
+        base_url: &Url,
+    ) -> String {
+        let Some(cell) = self.download.and_then(|index| cells.get(index)) else {
+            return String::new();
+        };
+        let Some(anchor) = cell.select(link_selector).next() else {
+            return String::new();
+        };
+
+        resolve_link(base_url, anchor.value().attr("href").unwrap_or_default())
+    }
+}
+
 fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntry>> {
     let document = Html::parse_document(html);
     let category_selector = Selector::parse("div.category")
@@ -359,37 +497,11 @@ fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntr
             continue;
         };
 
-        let mut header_index_description = None;
-        let mut header_index_version = None;
-        let mut header_index_args = None;
-        let mut header_index_download = None;
-        let mut version_header_is_file_version = false;
-
-        if let Some(header_row) = table.select(&row_selector).next() {
-            let headers: Vec<String> = header_row
-                .select(&header_selector)
-                .map(collect_text)
-                .collect();
-
-            for (index, header) in headers.iter().enumerate() {
-                let normalized = header.to_ascii_lowercase();
-                if normalized.contains("description") {
-                    header_index_description = Some(index);
-                }
-                if normalized.contains("version") {
-                    header_index_version = Some(index);
-                    if normalized.contains("file version") {
-                        version_header_is_file_version = true;
-                    }
-                }
-                if normalized.contains("silent install arguments") {
-                    header_index_args = Some(index);
-                }
-                if normalized.contains("download") || normalized.contains("link") {
-                    header_index_download = Some(index);
-                }
-            }
-        }
+        let columns = table
+            .select(&row_selector)
+            .next()
+            .map(|header_row| CatalogColumns::from_header_row(header_row, &header_selector))
+            .unwrap_or_default();
 
         for row in table.select(&row_selector).skip(1) {
             let cells: Vec<ElementRef<'_>> = row.select(&cell_selector).collect();
@@ -397,30 +509,16 @@ fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntr
                 continue;
             }
 
-            let description = value_at_index(&cells, header_index_description);
+            let description = columns.description(&cells);
             if description.is_empty() {
                 continue;
             }
 
-            let version = value_at_index(&cells, header_index_version);
-            let silent_install_arguments = value_at_index(&cells, header_index_args);
+            let version = columns.version(&cells);
+            let silent_install_arguments = columns.silent_install_arguments(&cells);
+            let download_link = columns.download_link(&cells, &link_selector, base_url);
 
-            let download_link = if let Some(index) = header_index_download {
-                if let Some(cell) = cells.get(index) {
-                    if let Some(anchor) = cell.select(&link_selector).next() {
-                        let href = anchor.value().attr("href").unwrap_or_default();
-                        resolve_link(base_url, href)
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            } else {
-                String::new()
-            };
-
-            let (version_number, file_version) = if version_header_is_file_version {
+            let (version_number, file_version) = if columns.version_is_file_version {
                 (version.clone(), version)
             } else {
                 (version, String::new())
@@ -443,10 +541,10 @@ fn parse_software_catalog(html: &str, base_url: &Url) -> Result<Vec<SoftwareEntr
 fn next_table_sibling(category_element: ElementRef<'_>) -> Option<ElementRef<'_>> {
     let mut next_node = category_element.next_sibling();
     while let Some(node) = next_node {
-        if let Some(element) = ElementRef::wrap(node) {
-            if element.value().name() == "table" {
-                return Some(element);
-            }
+        if let Some(element) = ElementRef::wrap(node)
+            && element.value().name() == "table"
+        {
+            return Some(element);
         }
         next_node = node.next_sibling();
     }
@@ -463,10 +561,10 @@ fn collect_text(element: ElementRef<'_>) -> String {
 }
 
 fn value_at_index(cells: &[ElementRef<'_>], index: Option<usize>) -> String {
-    if let Some(index) = index {
-        if let Some(cell) = cells.get(index) {
-            return collect_text(*cell);
-        }
+    if let Some(index) = index
+        && let Some(cell) = cells.get(index)
+    {
+        return collect_text(*cell);
     }
     String::new()
 }
@@ -497,17 +595,13 @@ fn compare_software_version(
     provided_version: &str,
 ) -> Option<SoftwareComparison> {
     let entry = get_software_by_description(entries, description)?;
-    let target_version = if !entry.file_version.is_empty() {
-        entry.file_version.clone()
-    } else {
-        entry.version_number.clone()
-    };
+    let target_version = entry.preferred_version().to_string();
 
     let ordering = compare_versions(provided_version, &target_version);
     let state = match ordering {
-        Ordering::Less => VersionState::NeedsUpdate,
-        Ordering::Greater => VersionState::Newer,
-        Ordering::Equal => VersionState::Same,
+        std::cmp::Ordering::Less => VersionState::NeedsUpdate,
+        std::cmp::Ordering::Greater => VersionState::Newer,
+        std::cmp::Ordering::Equal => VersionState::Same,
     };
 
     Some(SoftwareComparison {
@@ -517,16 +611,6 @@ fn compare_software_version(
         download_link: entry.download_link.clone(),
         silent_install_arguments: entry.silent_install_arguments.clone(),
     })
-}
-
-#[allow(dead_code)]
-fn compare_versions(provided: &str, target: &str) -> Ordering {
-    match version_compare::compare(provided, target) {
-        Ok(Cmp::Lt) => Ordering::Less,
-        Ok(Cmp::Gt) => Ordering::Greater,
-        Ok(Cmp::Eq) => Ordering::Equal,
-        _ => provided.trim().cmp(target.trim()),
-    }
 }
 
 fn version_state_as_str(state: &VersionState) -> &'static str {
@@ -545,10 +629,7 @@ fn resolve_target_install_args(target: &TargetSoftware, osd_args: &str) -> Strin
     let Some(env_var) = target.install_args_env_var else {
         return String::new();
     };
-    env::var(env_var)
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| osd_args.to_string())
+    non_empty_env_var(env_var).unwrap_or_else(|| osd_args.to_string())
 }
 
 /// Determines the action string and effective install args for a target that needs to be
@@ -564,19 +645,22 @@ fn perform_or_describe_install(
     config: &AppConfig,
     operation: &str,
 ) -> (String, String) {
-    let Some(env_var) = target.install_args_env_var else {
+    if target.install_args_env_var.is_none() {
         //=-- Target has no automated install support; report manual requirement.
-        return (format!("{} required (external)", capitalize_first(operation)), String::new());
-    };
+        return (
+            format!("{} required (external)", capitalize_first(operation)),
+            String::new(),
+        );
+    }
 
     //=-- ENV override takes priority over OSD-provided silent install arguments.
-    let resolved_args = env::var(env_var)
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| osd_args.to_string());
+    let resolved_args = resolve_target_install_args(target, osd_args);
 
     if download_link.is_empty() {
-        return (format!("Cannot {}: no download link", operation), resolved_args);
+        return (
+            format!("Cannot {}: no download link", operation),
+            resolved_args,
+        );
     }
 
     match mode {
@@ -623,7 +707,7 @@ fn actually_install(url: &str, args: &str, download_dir: &Path) -> String {
             let code = status.code().unwrap_or(-1);
             if status.success() || code == 3010 {
                 let label = if code == 3010 {
-                    "Installed — reboot required".to_string()
+                    "Installed - reboot required".to_string()
                 } else {
                     "Installed".to_string()
                 };
@@ -641,7 +725,7 @@ fn actually_install(url: &str, args: &str, download_dir: &Path) -> String {
                     code,
                     description
                 );
-                format!("Install failed (exit code: {} — {})", code, description)
+                format!("Install failed (exit code: {} - {})", code, description)
             }
         }
         Err(e) => {
@@ -666,7 +750,7 @@ fn msiexec_exit_code_description(code: i32) -> &'static str {
         1620 => "installation package invalid or corrupt",
         1622 => "error opening installation log file",
         1623 => "installation language not supported",
-        1625 => "installation forbidden by system policy — run as Administrator",
+        1625 => "installation forbidden by system policy - run as Administrator",
         1638 => "another version of this product is already installed",
         1639 => "invalid command-line argument to msiexec",
         1641 => "installer initiated a restart (success)",
@@ -691,8 +775,12 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
 
     let filename = extract_filename_from_url(url).unwrap_or_else(|| "installer.exe".to_string());
 
-    fs::create_dir_all(download_dir)
-        .with_context(|| format!("failed to create download directory: {}", download_dir.display()))?;
+    fs::create_dir_all(download_dir).with_context(|| {
+        format!(
+            "failed to create download directory: {}",
+            download_dir.display()
+        )
+    })?;
 
     let dest_path = download_dir.join(&filename);
 
@@ -701,7 +789,9 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
     for attempt in 1..=MAX_ATTEMPTS {
         log::info!(
             "Starting installer download | url={} | attempt={}/{}",
-            url, attempt, MAX_ATTEMPTS
+            url,
+            attempt,
+            MAX_ATTEMPTS
         );
 
         let attempt_result = (|| -> Result<()> {
@@ -722,15 +812,18 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
             if let Some(total) = content_length {
                 log::info!(
                     "Installer download started | url={} | size={} bytes ({:.1} MB)",
-                    url, total, total as f64 / 1_048_576.0
+                    url,
+                    total,
+                    total as f64 / 1_048_576.0
                 );
             } else {
                 log::info!("Installer download started | url={} | size=unknown", url);
             }
 
             let mut reader = response;
-            let mut file = fs::File::create(&dest_path)
-                .with_context(|| format!("failed to create installer file: {}", dest_path.display()))?;
+            let mut file = fs::File::create(&dest_path).with_context(|| {
+                format!("failed to create installer file: {}", dest_path.display())
+            })?;
 
             let mut buf = vec![0u8; CHUNK_SIZE];
             let mut bytes_written: u64 = 0;
@@ -744,8 +837,12 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
                 if n == 0 {
                     break;
                 }
-                file.write_all(&buf[..n])
-                    .with_context(|| format!("failed to write installer chunk to: {}", dest_path.display()))?;
+                file.write_all(&buf[..n]).with_context(|| {
+                    format!(
+                        "failed to write installer chunk to: {}",
+                        dest_path.display()
+                    )
+                })?;
                 bytes_written += n as u64;
 
                 if let Some(total) = content_length {
@@ -755,7 +852,10 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
                         last_pct_milestone = milestone;
                         log::info!(
                             "Installer download progress | url={} | bytes={}/{} ({}%)",
-                            url, bytes_written, total, pct
+                            url,
+                            bytes_written,
+                            total,
+                            pct
                         );
                     }
                 } else {
@@ -763,7 +863,9 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
                     if mb_done >= next_mb_milestone {
                         log::info!(
                             "Installer download progress | url={} | bytes={} ({:.1} MB)",
-                            url, bytes_written, bytes_written as f64 / 1_048_576.0
+                            url,
+                            bytes_written,
+                            bytes_written as f64 / 1_048_576.0
                         );
                         next_mb_milestone = mb_done + 10;
                     }
@@ -772,7 +874,9 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
 
             log::info!(
                 "Installer downloaded | url={} | dest={} | bytes={}",
-                url, dest_path.display(), bytes_written
+                url,
+                dest_path.display(),
+                bytes_written
             );
             Ok(())
         })();
@@ -784,13 +888,19 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
                 let _ = fs::remove_file(&dest_path);
                 log::warn!(
                     "Installer download attempt {}/{} failed | url={} | error={}",
-                    attempt, MAX_ATTEMPTS, url, e
+                    attempt,
+                    MAX_ATTEMPTS,
+                    url,
+                    e
                 );
                 last_error = e;
                 if attempt < MAX_ATTEMPTS {
                     log::info!(
                         "Retrying installer download | url={} | next_attempt={}/{} | delay={}s",
-                        url, attempt + 1, MAX_ATTEMPTS, RETRY_DELAY.as_secs()
+                        url,
+                        attempt + 1,
+                        MAX_ATTEMPTS,
+                        RETRY_DELAY.as_secs()
                     );
                     std::thread::sleep(RETRY_DELAY);
                 }
@@ -819,18 +929,27 @@ fn kill_process_if_running(process_name: &str) -> bool {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let code = output.status.code().unwrap_or(-1);
                 if code == 128 {
-                    log::info!("Process not running, nothing to kill | name={}", process_name);
+                    log::info!(
+                        "Process not running, nothing to kill | name={}",
+                        process_name
+                    );
                 } else {
                     log::warn!(
                         "taskkill exited with code {} for process | name={} | stderr={}",
-                        code, process_name, stderr.trim()
+                        code,
+                        process_name,
+                        stderr.trim()
                     );
                 }
                 false
             }
         }
         Err(e) => {
-            log::warn!("Failed to invoke taskkill | name={} | error={}", process_name, e);
+            log::warn!(
+                "Failed to invoke taskkill | name={} | error={}",
+                process_name,
+                e
+            );
             false
         }
     }
@@ -844,7 +963,7 @@ fn run_installer(path: &Path, args: &str) -> Result<std::process::ExitStatus> {
     let split_args = split_install_args(args);
     let is_msi = path
         .extension()
-        .map_or(false, |ext| ext.eq_ignore_ascii_case("msi"));
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("msi"));
 
     if is_msi {
         log::info!(
@@ -859,7 +978,11 @@ fn run_installer(path: &Path, args: &str) -> Result<std::process::ExitStatus> {
             .status()
             .with_context(|| format!("failed to launch msiexec for: {}", path.display()))
     } else {
-        log::info!("Running installer | path={} | args={}", path.display(), args);
+        log::info!(
+            "Running installer | path={} | args={}",
+            path.display(),
+            args
+        );
         Command::new(path)
             .args(&split_args)
             .status()
@@ -895,20 +1018,16 @@ fn split_install_args(args: &str) -> Vec<String> {
 fn extract_filename_from_url(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
     let segment = parsed.path_segments()?.next_back()?.to_string();
-    if segment.is_empty() { None } else { Some(segment) }
-}
-
-fn capitalize_first(s: &str) -> String {
-    let mut chars = s.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
+    if segment.is_empty() {
+        None
+    } else {
+        Some(segment)
     }
 }
 
 /// Writes each CDK Installation Info check result to an individual `.txt` file in `dir`,
 /// a `summary.txt` containing the full CDK Installation Info table, and a
-/// `last-run--<timestamp>--<epoch>.txt` marker file recording when the run occurred.
+/// `last-run.txt` marker file recording when the run occurred.
 ///
 /// All per-check filenames are lowercased. Non-alphanumeric, non-dot, non-hyphen
 /// characters in check labels are replaced with underscores (consecutive collapsed).
@@ -917,62 +1036,20 @@ fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> 
         .with_context(|| format!("failed to create variables directory: {}", dir.display()))?;
 
     for (check, result) in &app_logging::cdk_info_entries(info) {
-        let filename = format!("{}.txt", to_safe_filename(check));
+        let filename = format!("{}.txt", safe_filename_token(check));
         let file_path = dir.join(&filename);
-        delete_if_exists(&file_path);
-        fs::write(&file_path, result)
-            .with_context(|| format!("failed to write variable file: {}", file_path.display()))?;
+        replace_file(&file_path, result)?;
     }
 
     let summary_path = dir.join("summary.txt");
-    delete_if_exists(&summary_path);
-    fs::write(&summary_path, app_logging::cdk_info_table_string(info))
-        .with_context(|| format!("failed to write summary file: {}", summary_path.display()))?;
+    replace_file(&summary_path, app_logging::cdk_info_table_string(info))?;
 
     let last_run_path = dir.join("last-run.txt");
-    delete_if_exists(&last_run_path);
     let now = Local::now();
     let last_run_content = format!("{}--{}", build_timestamp(now), now.timestamp());
-    fs::write(&last_run_path, &last_run_content)
-        .with_context(|| format!("failed to write last-run file: {}", last_run_path.display()))?;
+    replace_file(&last_run_path, last_run_content)?;
 
     Ok(())
-}
-
-//=-- Deletes `path` if it exists, logging a warning on failure rather than propagating the error.
-fn delete_if_exists(path: &Path) {
-    match path.try_exists() {
-        Ok(true) => {
-            if let Err(e) = fs::remove_file(path) {
-                log::warn!("Failed to delete existing file | path={} | error={}", path.display(), e);
-            }
-        }
-        Ok(false) => {}
-        Err(e) => {
-            log::warn!("Could not check existence of file | path={} | error={}", path.display(), e);
-        }
-    }
-}
-
-/// Converts a check label into a Windows-safe filename token.
-///
-/// Alphanumeric characters, hyphens, and dots are kept as-is.
-/// Any other character (spaces, parentheses, backslashes, etc.) is replaced
-/// by an underscore; consecutive underscores are collapsed to one.
-/// Leading and trailing underscores are trimmed.
-fn to_safe_filename(name: &str) -> String {
-    let mut result = String::with_capacity(name.len());
-    let mut last_was_underscore = false;
-    for c in name.chars() {
-        if c.is_alphanumeric() || c == '.' || c == '-' {
-            result.push(c);
-            last_was_underscore = false;
-        } else if !last_was_underscore {
-            result.push('_');
-            last_was_underscore = true;
-        }
-    }
-    result.trim_matches('_').to_string().to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -981,13 +1058,7 @@ mod tests;
 
 fn init_logging() -> Result<PathBuf> {
     let timestamp = build_timestamp(Local::now());
-    let log_dir = env::var("LOG_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("cdk-updater-logs")
-        });
+    let log_dir = env_path_or_else("LOG_DIR", || cwd_child("cdk-updater-logs"));
     fs::create_dir_all(&log_dir).context("failed to create logs directory")?;
 
     let log_file_path = log_dir.join(format!("cdk-drive-updater--{}.log", timestamp));
@@ -1009,21 +1080,4 @@ fn init_logging() -> Result<PathBuf> {
         .context("failed to initialize logger")?;
 
     Ok(log_file_path)
-}
-
-fn build_timestamp(now: chrono::DateTime<Local>) -> String {
-    let hour_24 = now.hour();
-    let hour_12 = match hour_24 % 12 {
-        0 => 12,
-        hour => hour,
-    };
-    let meridiem = if hour_24 < 12 { "am" } else { "pm" };
-
-    format!(
-        "{}--{}-{:02}-{}",
-        now.format("%Y-%m-%d"),
-        hour_12,
-        now.minute(),
-        meridiem
-    )
 }
