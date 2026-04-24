@@ -56,7 +56,15 @@ detection and update step by:
 cargo build --release
 ```
 
-The binary is written to `target\release\cdk-drive-updater.exe`.
+The executable uses `resources\logo.ico` as its Windows application icon. For a
+single-file release artifact, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build-release.ps1
+```
+
+The release executable is written to `dist\cdk-drive-updater.exe`. The script
+does not copy Cargo intermediates, logs, resources, or local configuration files.
 
 ---
 
