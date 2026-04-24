@@ -3,8 +3,8 @@
 A Windows CLI tool written in Rust that compares locally-installed CDK Drive
 component versions against the versions published on the CDK Online Software
 Distribution (OSD) catalog page and logs a detailed report.  In **update** mode
-(not yet fully implemented) the tool will also trigger silent installs for any
-package that is out-of-date.
+the tool also triggers silent installs for any installable package that is
+out-of-date or missing.
 
 ---
 
@@ -162,16 +162,17 @@ The tool produces the following ASCII tables in order:
 
 ```md
 main.rs
-  │  Parses args → resolves AppConfig → init logging
-  │  gather() ──────────────────────────────────────► cdk_info.rs
-  │                                                    Registry + path checks
-  │  fetch_software_catalog() ──► HTTP GET OSD page
-  │  parse_software_catalog()  ──► scraper HTML parse
-  │  fetch_adaptiva_version()  ──► HTTP GET version URL
-  │  process_target() × 4 ──────────────────────────► installed.rs
-  │                                                    Registry + exe version reads
-  └─ app_logging::log_*() ──────────────────────────► app_logging.rs
-                                                       ASCII table builder + fern logger
+  |  Parses args -> resolves AppConfig -> init logging
+  |  cdk_info::gather() ----------------------------> cdk_info.rs
+  |                                                    Registry + path checks
+  |  fetch_software_catalog() ----> HTTP GET OSD page
+  |  parse_software_catalog()  ----> scraper HTML parse
+  |  fetch_adaptiva_version()  ----> HTTP GET version URL
+  |  process_target() x 4 --------------------------> installed.rs
+  |                                                    Registry + exe version reads
+  |  app_logging::log_*() --------------------------> app_logging.rs
+  |                                                    ASCII table builder + fern logger
+  `-> shared helpers -------------------------------> utils.rs
 ```
 
 ### High-level data flow
@@ -198,6 +199,7 @@ main.rs
 | `installed` | `src/installed.rs` | Windows registry and executable file-version detection for all tracked packages |
 | `cdk_info` | `src/cdk_info.rs` | Snapshot of CDK-specific registry keys and filesystem paths |
 | `app_logging` | `src/app_logging.rs` | ASCII table builder and all structured log emission functions |
+| `utils` | `src/utils.rs` | Shared helpers for env/path defaults, version comparison, timestamps, safe filenames, missing-value checks, and replace-before-write file output |
 
 ---
 
