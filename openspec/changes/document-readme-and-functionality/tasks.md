@@ -23,3 +23,4 @@
 - [x] 3.1 Update openspec/AGENTS.md with rules requiring README.md and FUNCTIONALITY.md to be kept in sync with src/ changes
 - [x] 3.2 Specify in AGENTS.md the required structure of both documents so agents know what to update
 - [x] 3.3 Create .copilot/instructions/documentation.instructions.md mirroring the maintenance rules for VS Code Copilot
+- [x] 3.4 Extend documentation maintenance rules to cover build commands, release profile settings, and release packaging changes
