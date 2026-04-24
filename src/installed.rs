@@ -1,7 +1,7 @@
 //! Registry queries for installed MSI software versions.
 //!
-//! Translates the HKCR\Installer\Products scan and MSI version-decoding
-//! logic from the PowerShell reference script.
+//! Translates Add/Remove Programs and MSI product registry data into installed
+//! software versions.
 
 use std::ffi::{OsStr, c_void};
 use std::io;
@@ -42,6 +42,8 @@ pub const WEBSTART_ADD_REMOVE_PATTERN: &str = "CDKDriveWebStart";
 pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 pub const ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH: &str =
     r"Adaptiva\AdaptivaClient\bin\OneSiteClient.exe";
+const UNINSTALL_NATIVE: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+const UNINSTALL_WOW64: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
 
 /// Returns the newest installed version for
 /// `CDK Drive 3rd Party Managed Assemblies 96.x` from MSI product registry
@@ -109,16 +111,75 @@ pub fn get_webstart_installed_version_from_cdk_info(
     )
 }
 
-/// Searches `HKEY_CLASSES_ROOT\Installer\Products` for all installed MSI
-/// products whose `ProductName` value contains `name_contains`
-/// (case-insensitive). Returns the entry with the highest version, or
-/// `None` if no matching product is found.
+/// Searches Add/Remove Programs and `HKEY_CLASSES_ROOT\Installer\Products` for
+/// all installed products whose display/product name contains `name_contains`
+/// (case-insensitive). Returns the entry with the highest version, or `None` if
+/// no matching product is found.
 #[allow(dead_code)]
 pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>> {
-    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
-    let products = hkcr.open_subkey("Installer\\Products")?;
+    let mut matches = get_add_remove_display_versions(name_contains);
+    matches.extend(get_installer_product_versions(name_contains)?);
 
-    let pattern = name_contains.to_ascii_lowercase();
+    Ok(select_highest_version(matches))
+}
+
+fn get_add_remove_display_versions(name_contains: &str) -> Vec<InstalledProduct> {
+    let mut matches = Vec::new();
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+    for (hive, subkey_path) in [
+        (&hklm, UNINSTALL_NATIVE),
+        (&hklm, UNINSTALL_WOW64),
+        (&hkcu, UNINSTALL_NATIVE),
+    ] {
+        let Ok(uninstall_key) = hive.open_subkey(subkey_path) else {
+            continue;
+        };
+
+        collect_add_remove_display_versions(&uninstall_key, name_contains, &mut matches);
+    }
+
+    matches
+}
+
+fn collect_add_remove_display_versions(
+    uninstall_key: &RegKey,
+    name_contains: &str,
+    matches: &mut Vec<InstalledProduct>,
+) {
+    for key_name in uninstall_key.enum_keys().flatten() {
+        let Ok(subkey) = uninstall_key.open_subkey(&key_name) else {
+            continue;
+        };
+
+        let Ok(display_name) = subkey.get_value::<String, _>("DisplayName") else {
+            continue;
+        };
+
+        if !product_name_matches(&display_name, name_contains) {
+            continue;
+        }
+
+        let Ok(display_version) = subkey.get_value::<String, _>("DisplayVersion") else {
+            continue;
+        };
+
+        let version = display_version.trim();
+        if version.is_empty() {
+            continue;
+        }
+
+        matches.push(InstalledProduct::new(display_name, version));
+    }
+}
+
+fn get_installer_product_versions(name_contains: &str) -> Result<Vec<InstalledProduct>> {
+    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
+    let Ok(products) = hkcr.open_subkey("Installer\\Products") else {
+        return Ok(Vec::new());
+    };
+
     let mut matches: Vec<InstalledProduct> = Vec::new();
 
     for key_name in products.enum_keys().flatten() {
@@ -130,7 +191,7 @@ pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProd
             continue;
         };
 
-        if !product_name.to_ascii_lowercase().contains(&pattern) {
+        if !product_name_matches(&product_name, name_contains) {
             continue;
         }
 
@@ -142,7 +203,7 @@ pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProd
         matches.push(InstalledProduct::new(product_name, version));
     }
 
-    Ok(select_highest_version(matches))
+    Ok(matches)
 }
 
 fn installed_products_from_executables(
@@ -306,6 +367,22 @@ fn select_highest_version(mut matches: Vec<InstalledProduct>) -> Option<Installe
     //=-- Sort descending so the highest version comes first.
     matches.sort_by(|a, b| compare_versions(&b.version, &a.version));
     matches.into_iter().next()
+}
+
+fn product_name_matches(product_name: &str, pattern: &str) -> bool {
+    let product_name_lower = product_name.to_ascii_lowercase();
+    let pattern_lower = pattern.to_ascii_lowercase();
+
+    product_name_lower.contains(&pattern_lower)
+        || compact_ascii_alphanumeric(&product_name_lower)
+            .contains(&compact_ascii_alphanumeric(&pattern_lower))
+}
+
+fn compact_ascii_alphanumeric(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
 }
 
 /// Decodes an MSI product version, preferring a version string embedded in
