@@ -48,8 +48,7 @@ const UNINSTALL_WOW64: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVe
 /// Returns the newest installed version for
 /// `CDK Drive 3rd Party Managed Assemblies 96.x` from MSI product registry
 /// entries.
-pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()
--> Result<Option<InstalledProduct>> {
+pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version() -> Result<Option<InstalledProduct>> {
     get_installed_version(CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN)
 }
 
