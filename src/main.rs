@@ -545,8 +545,7 @@ fn next_table_sibling(category_element: ElementRef<'_>) -> Option<ElementRef<'_>
     let mut next_node = category_element.next_sibling();
     while let Some(node) = next_node {
         if let Some(element) = ElementRef::wrap(node)
-            && element.value().name() == "table"
-        {
+            && element.value().name() == "table" {
             return Some(element);
         }
         next_node = node.next_sibling();
