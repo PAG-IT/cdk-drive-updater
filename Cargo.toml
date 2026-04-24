@@ -1,7 +1,8 @@
 [package]
 name = "cdk-drive-updater"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+authors = ["Tyler Morrison"]
 
 [dependencies]
 anyhow = "1.0"
@@ -15,3 +16,13 @@ version-compare = "0.2"
 walkdir = "2.5"
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 winreg = "0.56.0"
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
