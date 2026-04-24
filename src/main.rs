@@ -87,6 +87,15 @@ impl AppMode {
     }
 }
 
+impl std::fmt::Display for AppMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AppMode::Query => write!(f, "query"),
+            AppMode::Update => write!(f, "update"),
+        }
+    }
+}
+
 #[derive(Debug)]
 struct AppConfig {
     version_source_url: String,
@@ -182,13 +191,14 @@ fn main() -> Result<()> {
 
     let args: Vec<String> = env::args().collect();
     let mode = AppMode::from_args(&args[1..]);
+    let mode_str = mode.to_string();
 
     //=-- Log the app mode prominently at the very start.
-    app_logging::log_app_mode(app_mode_as_str(&mode));
+    app_logging::log_app_mode(&mode_str);
 
     app_logging::log_startup_summary(
         &log_file_path,
-        app_mode_as_str(&mode),
+        &mode_str,
         &config.version_source_url,
         config.download_dir.to_string_lossy().as_ref(),
         config.variables_dir.to_string_lossy().as_ref(),
@@ -222,13 +232,6 @@ fn main() -> Result<()> {
     app_logging::log_target_comparisons(&comparison_rows);
 
     Ok(())
-}
-
-fn app_mode_as_str(mode: &AppMode) -> &'static str {
-    match mode {
-        AppMode::Query => "query",
-        AppMode::Update => "update",
-    }
 }
 
 fn merge_adaptiva_catalog_entry(catalog: &mut Vec<SoftwareEntry>, adaptiva_version: String) {
@@ -846,7 +849,11 @@ fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf> {
                 bytes_written += n as u64;
 
                 if let Some(total) = content_length {
-                    let pct = bytes_written * 100 / total;
+                    let pct = if total > 0 {
+                        bytes_written * 100 / total
+                    } else {
+                        100
+                    };
                     let milestone = pct / 10;
                     if milestone > last_pct_milestone {
                         last_pct_milestone = milestone;
