@@ -929,21 +929,11 @@ fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()> 
     fs::write(&summary_path, app_logging::cdk_info_table_string(info))
         .with_context(|| format!("failed to write summary file: {}", summary_path.display()))?;
 
-    //=-- Remove any stale last-run marker before writing the new one.
-    if let Ok(read_dir) = fs::read_dir(dir) {
-        for entry in read_dir.filter_map(|e| e.ok()) {
-            let name = entry.file_name();
-            let name_str = name.to_string_lossy();
-            if name_str.starts_with("last-run--") && name_str.ends_with(".txt") {
-                delete_if_exists(&entry.path());
-            }
-        }
-    }
-
+    let last_run_path = dir.join("last-run.txt");
+    delete_if_exists(&last_run_path);
     let now = Local::now();
-    let last_run_name = format!("last-run--{}--{}.txt", build_timestamp(now), now.timestamp());
-    let last_run_path = dir.join(&last_run_name);
-    fs::write(&last_run_path, "")
+    let last_run_content = format!("{}--{}", build_timestamp(now), now.timestamp());
+    fs::write(&last_run_path, &last_run_content)
         .with_context(|| format!("failed to write last-run file: {}", last_run_path.display()))?;
 
     Ok(())
