@@ -175,8 +175,14 @@ fn collect_add_remove_display_versions(
 
 fn get_installer_product_versions(name_contains: &str) -> Result<Vec<InstalledProduct>> {
     let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
-    let Ok(products) = hkcr.open_subkey("Installer\\Products") else {
-        return Ok(Vec::new());
+    let products = match hkcr.open_subkey("Installer\\Products") {
+        Ok(products) => products,
+        Err(err) => {
+            eprintln!(
+                "warning: failed to open HKCR\\Installer\\Products while detecting installed MSI product versions: {err}"
+            );
+            return Ok(Vec::new());
+        }
     };
 
     let mut matches: Vec<InstalledProduct> = Vec::new();
