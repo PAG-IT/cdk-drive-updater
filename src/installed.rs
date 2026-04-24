@@ -1,10 +1,8 @@
 //! Registry queries for installed MSI software versions.
 //!
-//! Translates the HKCR\Installer\Products scan and MSI version-decoding
-//! logic from the PowerShell reference script.
+//! Translates Add/Remove Programs and MSI product registry data into installed
+//! software versions.
 
-use std::cmp::Ordering;
-use std::env;
 use std::ffi::{OsStr, c_void};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -18,6 +16,7 @@ use winreg::RegKey;
 use winreg::enums::*;
 
 use crate::cdk_info::CdkInfo;
+use crate::utils::{compare_versions, is_missing_value, non_empty_env_var};
 
 /// A single installed MSI product entry returned from the registry.
 #[derive(Debug, Clone)]
@@ -27,6 +26,15 @@ pub struct InstalledProduct {
     pub version: String,
 }
 
+impl InstalledProduct {
+    fn new(product_name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            product_name: product_name.into(),
+            version: version.into(),
+        }
+    }
+}
+
 pub const CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN: &str =
     "CDK Drive 3rd Party Managed Assemblies";
 pub const ADAPTIVA_ADD_REMOVE_PATTERN: &str = "Adaptiva";
@@ -34,12 +42,13 @@ pub const WEBSTART_ADD_REMOVE_PATTERN: &str = "CDKDriveWebStart";
 pub const BLUEZONE_EXECUTABLE_NAME: &str = "bzvt.exe";
 pub const ADAPTIVA_ONESITE_CLIENT_RELATIVE_PATH: &str =
     r"Adaptiva\AdaptivaClient\bin\OneSiteClient.exe";
+const UNINSTALL_NATIVE: &str = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall";
+const UNINSTALL_WOW64: &str = r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall";
 
 /// Returns the newest installed version for
 /// `CDK Drive 3rd Party Managed Assemblies 96.x` from MSI product registry
 /// entries.
-pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version(
-) -> Result<Option<InstalledProduct>> {
+pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version() -> Result<Option<InstalledProduct>> {
     get_installed_version(CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN)
 }
 
@@ -47,58 +56,20 @@ pub fn get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version(
 /// product entries.
 pub fn get_adaptiva_installed_version() -> Result<Option<InstalledProduct>> {
     let add_remove_match = get_installed_version(ADAPTIVA_ADD_REMOVE_PATTERN)?;
-    let mut executable_matches = Vec::new();
-
-    for executable_path in find_adaptiva_executables() {
-        let version = match read_executable_file_version(&executable_path) {
-            Ok(Some(version)) => version,
-            Ok(None) => continue,
-            Err(error) => {
-                log::warn!(
-                    "Skipping Adaptiva executable without readable version | path={} | error= {}",
-                    executable_path.display(),
-                    error
-                );
-                continue;
-            }
-        };
-
-        executable_matches.push(InstalledProduct {
-            product_name: executable_path.display().to_string(),
-            version,
-        });
-    }
-
-    let executable_match = select_highest_version(executable_matches);
+    let executable_match = select_highest_version(installed_products_from_executables(
+        "Adaptiva",
+        find_adaptiva_executables(),
+    ));
     Ok(executable_match.or(add_remove_match))
 }
 
 /// Returns the newest installed BlueZone terminal emulator version found under
 /// the available Program Files roots.
 pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>> {
-    let mut matches = Vec::new();
-
-    for executable_path in find_bluezone_executables() {
-        let version = match read_executable_file_version(&executable_path) {
-            Ok(Some(version)) => version,
-            Ok(None) => continue,
-            Err(error) => {
-                log::warn!(
-                    "Skipping BlueZone executable without readable version | path={} | error={}",
-                    executable_path.display(),
-                    error
-                );
-                continue;
-            }
-        };
-
-        matches.push(InstalledProduct {
-            product_name: executable_path.display().to_string(),
-            version,
-        });
-    }
-
-    Ok(select_highest_version(matches))
+    Ok(select_highest_version(installed_products_from_executables(
+        "BlueZone",
+        find_bluezone_executables(),
+    )))
 }
 
 /// Returns the newest installed WebStart version from Add/Remove MSI product
@@ -132,37 +103,88 @@ pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> 
 pub fn get_webstart_installed_version_from_cdk_info(
     cdk_info: &CdkInfo,
 ) -> Result<Option<InstalledProduct>> {
-    // Prefer Add/Remove version if available
-    let add_remove_version = cdk_info.webstart_add_remove_version.trim();
-    if !add_remove_version.is_empty() && !add_remove_version.eq_ignore_ascii_case("NotFound") {
-        return Ok(Some(InstalledProduct {
-            product_name: "CDK Drive WebStart".to_string(),
-            version: add_remove_version.to_string(),
-        }));
-    }
-
-    // Fall back to executable file version if Add/Remove version not found
-    let exe_version = cdk_info.webstart_version.trim();
-    if !exe_version.is_empty() && !exe_version.eq_ignore_ascii_case("NotFound") {
-        return Ok(Some(InstalledProduct {
-            product_name: "CDK Drive WebStart".to_string(),
-            version: exe_version.to_string(),
-        }));
-    }
-
-    Ok(None)
+    let product_name = "CDK Drive WebStart";
+    Ok(
+        product_from_reported_version(product_name, &cdk_info.webstart_add_remove_version)
+            .or_else(|| product_from_reported_version(product_name, &cdk_info.webstart_version)),
+    )
 }
 
-/// Searches `HKEY_CLASSES_ROOT\Installer\Products` for all installed MSI
-/// products whose `ProductName` value contains `name_contains`
-/// (case-insensitive). Returns the entry with the highest version, or
-/// `None` if no matching product is found.
+/// Searches Add/Remove Programs and `HKEY_CLASSES_ROOT\Installer\Products` for
+/// all installed products whose display/product name contains `name_contains`
+/// (case-insensitive). Returns the entry with the highest version, or `None` if
+/// no matching product is found.
 #[allow(dead_code)]
 pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>> {
-    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
-    let products = hkcr.open_subkey("Installer\\Products")?;
+    let mut matches = get_add_remove_display_versions(name_contains);
+    matches.extend(get_installer_product_versions(name_contains)?);
 
-    let pattern = name_contains.to_ascii_lowercase();
+    Ok(select_highest_version(matches))
+}
+
+fn get_add_remove_display_versions(name_contains: &str) -> Vec<InstalledProduct> {
+    let mut matches = Vec::new();
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+
+    for (hive, subkey_path) in [
+        (&hklm, UNINSTALL_NATIVE),
+        (&hklm, UNINSTALL_WOW64),
+        (&hkcu, UNINSTALL_NATIVE),
+    ] {
+        let Ok(uninstall_key) = hive.open_subkey(subkey_path) else {
+            continue;
+        };
+
+        collect_add_remove_display_versions(&uninstall_key, name_contains, &mut matches);
+    }
+
+    matches
+}
+
+fn collect_add_remove_display_versions(
+    uninstall_key: &RegKey,
+    name_contains: &str,
+    matches: &mut Vec<InstalledProduct>,
+) {
+    for key_name in uninstall_key.enum_keys().flatten() {
+        let Ok(subkey) = uninstall_key.open_subkey(&key_name) else {
+            continue;
+        };
+
+        let Ok(display_name) = subkey.get_value::<String, _>("DisplayName") else {
+            continue;
+        };
+
+        if !product_name_matches(&display_name, name_contains) {
+            continue;
+        }
+
+        let Ok(display_version) = subkey.get_value::<String, _>("DisplayVersion") else {
+            continue;
+        };
+
+        let version = display_version.trim();
+        if version.is_empty() {
+            continue;
+        }
+
+        matches.push(InstalledProduct::new(display_name, version));
+    }
+}
+
+fn get_installer_product_versions(name_contains: &str) -> Result<Vec<InstalledProduct>> {
+    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
+    let products = match hkcr.open_subkey("Installer\\Products") {
+        Ok(products) => products,
+        Err(err) => {
+            eprintln!(
+                "warning: failed to open HKCR\\Installer\\Products while detecting installed MSI product versions: {err}"
+            );
+            return Ok(Vec::new());
+        }
+    };
+
     let mut matches: Vec<InstalledProduct> = Vec::new();
 
     for key_name in products.enum_keys().flatten() {
@@ -174,7 +196,7 @@ pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProd
             continue;
         };
 
-        if !product_name.to_ascii_lowercase().contains(&pattern) {
+        if !product_name_matches(&product_name, name_contains) {
             continue;
         }
 
@@ -183,13 +205,47 @@ pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProd
         };
 
         let version = decode_msi_version(&product_name, version_int);
-        matches.push(InstalledProduct {
-            product_name,
-            version,
-        });
+        matches.push(InstalledProduct::new(product_name, version));
     }
 
-    Ok(select_highest_version(matches))
+    Ok(matches)
+}
+
+fn installed_products_from_executables(
+    component_name: &str,
+    executable_paths: Vec<PathBuf>,
+) -> Vec<InstalledProduct> {
+    executable_paths
+        .into_iter()
+        .filter_map(|executable_path| {
+            let version = match read_executable_file_version(&executable_path) {
+                Ok(Some(version)) => version,
+                Ok(None) => return None,
+                Err(error) => {
+                    log::warn!(
+                        "Skipping {} executable without readable version | path={} | error={}",
+                        component_name,
+                        executable_path.display(),
+                        error
+                    );
+                    return None;
+                }
+            };
+
+            Some(InstalledProduct::new(
+                executable_path.display().to_string(),
+                version,
+            ))
+        })
+        .collect()
+}
+
+fn product_from_reported_version(product_name: &str, version: &str) -> Option<InstalledProduct> {
+    if is_missing_value(version) {
+        None
+    } else {
+        Some(InstalledProduct::new(product_name, version.trim()))
+    }
 }
 
 fn find_bluezone_executables() -> Vec<PathBuf> {
@@ -244,16 +300,9 @@ fn candidate_program_files_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
     for variable in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
-        let Ok(value) = env::var(variable) else {
-            continue;
-        };
-
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            continue;
+        if let Some(value) = non_empty_env_var(variable) {
+            roots.push(PathBuf::from(value));
         }
-
-        roots.push(PathBuf::from(trimmed));
     }
 
     for fallback in [r"C:\Program Files", r"C:\Program Files (x86)"] {
@@ -321,8 +370,24 @@ fn format_fixed_file_version(version_info: &VS_FIXEDFILEINFO) -> String {
 
 fn select_highest_version(mut matches: Vec<InstalledProduct>) -> Option<InstalledProduct> {
     //=-- Sort descending so the highest version comes first.
-    matches.sort_by(|a, b| compare_version_strings(&b.version, &a.version));
+    matches.sort_by(|a, b| compare_versions(&b.version, &a.version));
     matches.into_iter().next()
+}
+
+fn product_name_matches(product_name: &str, pattern: &str) -> bool {
+    let product_name_lower = product_name.to_ascii_lowercase();
+    let pattern_lower = pattern.to_ascii_lowercase();
+
+    product_name_lower.contains(&pattern_lower)
+        || compact_ascii_alphanumeric(&product_name_lower)
+            .contains(&compact_ascii_alphanumeric(&pattern_lower))
+}
+
+fn compact_ascii_alphanumeric(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect()
 }
 
 /// Decodes an MSI product version, preferring a version string embedded in
@@ -359,14 +424,6 @@ fn extract_version_from_name(name: &str) -> Option<String> {
         Some(version.trim_end_matches('.').to_string())
     } else {
         None
-    }
-}
-
-fn compare_version_strings(a: &str, b: &str) -> Ordering {
-    match version_compare::compare(a, b) {
-        Ok(version_compare::Cmp::Lt) => Ordering::Less,
-        Ok(version_compare::Cmp::Gt) => Ordering::Greater,
-        _ => a.cmp(b),
     }
 }
 

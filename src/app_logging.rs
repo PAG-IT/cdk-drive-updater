@@ -2,6 +2,7 @@ use std::path::Path;
 
 use crate::SoftwareEntry;
 use crate::cdk_info;
+use crate::utils::NOT_FOUND_DISPLAY;
 
 #[derive(Debug, Clone)]
 pub(crate) struct TargetComparisonRow {
@@ -24,7 +25,13 @@ pub(crate) fn log_app_mode(mode: &str) {
     log::info!("========================================");
 }
 
-pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_source_url: &str, download_dir: &str, variables_dir: &str) {
+pub(crate) fn log_startup_summary(
+    log_file_path: &Path,
+    mode: &str,
+    version_source_url: &str,
+    download_dir: &str,
+    variables_dir: &str,
+) {
     let rows = vec![
         vec!["App".to_string(), "CDK Drive updater".to_string()],
         vec!["Mode".to_string(), mode.to_string()],
@@ -34,41 +41,89 @@ pub(crate) fn log_startup_summary(log_file_path: &Path, mode: &str, version_sour
         vec!["Log File".to_string(), log_file_path.display().to_string()],
     ];
 
-    log::info!("{}", build_ascii_table(
-        "Runtime Summary",
-        &["Setting", "Value"],
-        &rows,
-    ));
+    log::info!(
+        "{}",
+        build_ascii_table("Runtime Summary", &["Setting", "Value"], &rows,)
+    );
 }
 
 /// Builds the ordered `(check, result)` pairs for the CDK Installation Info table.
 ///
 /// Used by both [`log_cdk_info_summary`] and [`crate::write_cdk_info_variables`].
 pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)> {
-    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut entries = vec![
+        check_row("ADP (wsvc 4.5)", info.adp_check.to_string()),
+        check_row("WebStart URL Protocol", info.webstart_url_check.to_string()),
+        check_row("WebStart Shell Command", info.webstart_shell_var.clone()),
+        check_row(
+            "UnifyDriveEnabler",
+            info.unify_drive_enabler_check.to_string(),
+        ),
+        check_row("Adaptiva Client", info.adaptiva_check.to_string()),
+    ];
 
-    entries.push(("ADP (wsvc 4.5)".to_string(), info.adp_check.to_string()));
-    entries.push(("WebStart URL Protocol".to_string(), info.webstart_url_check.to_string()));
-    entries.push(("WebStart Shell Command".to_string(), info.webstart_shell_var.clone()));
-    entries.push(("UnifyDriveEnabler".to_string(), info.unify_drive_enabler_check.to_string()));
-    entries.push(("Adaptiva Client".to_string(), info.adaptiva_check.to_string()));
-    expand_key_value_rows("Adaptiva CDK Key (Native)", &info.adaptiva_cdk_key_values, &mut entries);
-    expand_key_value_rows("Adaptiva CDK Key (WOW6432Node)", &info.adaptiva_cdk_key_wow_values, &mut entries);
-    entries.push(("Adaptiva Server Host (Native)".to_string(), info.adaptiva_server_host_name.clone()));
-    entries.push(("Adaptiva Server Host (WOW6432Node)".to_string(), info.adaptiva_server_host_name_wow.clone()));
-    entries.push(("Adaptiva Server Locator (Native)".to_string(), info.adaptiva_server_locator_name.clone()));
-    entries.push(("Adaptiva Server Locator (WOW6432Node)".to_string(), info.adaptiva_server_locator_name_wow.clone()));
-    entries.push(("Adaptiva Setup GUID (Native)".to_string(), info.adaptiva_setup_guid.clone()));
-    entries.push(("Adaptiva Setup GUID (WOW6432Node)".to_string(), info.adaptiva_setup_guid_wow.clone()));
-    entries.push(("Adaptiva Client Data Manager GUID (Native)".to_string(), info.adaptiva_client_data_manager_guid.clone()));
-    entries.push(("Adaptiva Client Data Manager GUID (WOW6432Node)".to_string(), info.adaptiva_client_data_manager_guid_wow.clone()));
-    entries.push(("SIA Directory".to_string(), info.sia_check.to_string()));
-    entries.push(("SIA Win10 XML".to_string(), info.sia_xml_check.to_string()));
-    entries.push(("SIA Fix Script".to_string(), info.sia_fix_check.to_string()));
-    entries.push(("WebStart Version (Executable)".to_string(), info.webstart_version.clone()));
-    entries.push(("WebStart Version (Add/Remove)".to_string(), info.webstart_add_remove_version.clone()));
+    expand_key_value_rows(
+        "Adaptiva CDK Key (Native)",
+        &info.adaptiva_cdk_key_values,
+        &mut entries,
+    );
+    expand_key_value_rows(
+        "Adaptiva CDK Key (WOW6432Node)",
+        &info.adaptiva_cdk_key_wow_values,
+        &mut entries,
+    );
+
+    entries.extend([
+        check_row(
+            "Adaptiva Server Host (Native)",
+            info.adaptiva_server_host_name.clone(),
+        ),
+        check_row(
+            "Adaptiva Server Host (WOW6432Node)",
+            info.adaptiva_server_host_name_wow.clone(),
+        ),
+        check_row(
+            "Adaptiva Server Locator (Native)",
+            info.adaptiva_server_locator_name.clone(),
+        ),
+        check_row(
+            "Adaptiva Server Locator (WOW6432Node)",
+            info.adaptiva_server_locator_name_wow.clone(),
+        ),
+        check_row(
+            "Adaptiva Setup GUID (Native)",
+            info.adaptiva_setup_guid.clone(),
+        ),
+        check_row(
+            "Adaptiva Setup GUID (WOW6432Node)",
+            info.adaptiva_setup_guid_wow.clone(),
+        ),
+        check_row(
+            "Adaptiva Client Data Manager GUID (Native)",
+            info.adaptiva_client_data_manager_guid.clone(),
+        ),
+        check_row(
+            "Adaptiva Client Data Manager GUID (WOW6432Node)",
+            info.adaptiva_client_data_manager_guid_wow.clone(),
+        ),
+        check_row("SIA Directory", info.sia_check.to_string()),
+        check_row("SIA Win10 XML", info.sia_xml_check.to_string()),
+        check_row("SIA Fix Script", info.sia_fix_check.to_string()),
+        check_row(
+            "WebStart Version (Executable)",
+            info.webstart_version.clone(),
+        ),
+        check_row(
+            "WebStart Version (Add/Remove)",
+            info.webstart_add_remove_version.clone(),
+        ),
+    ]);
 
     entries
+}
+
+fn check_row(label: &str, value: impl Into<String>) -> (String, String) {
+    (label.to_string(), value.into())
 }
 
 pub(crate) fn log_cdk_info_summary(info: &cdk_info::CdkInfo) {
@@ -84,11 +139,7 @@ pub(crate) fn cdk_info_table_string(info: &cdk_info::CdkInfo) -> String {
         .map(|(check, result)| vec![check, result])
         .collect();
 
-    build_ascii_table(
-        "CDK Installation Info",
-        &["Check", "Result"],
-        &rows,
-    )
+    build_ascii_table("CDK Installation Info", &["Check", "Result"], &rows)
 }
 
 //=-- Emits one row per value pair when the key exists, or a single "Not Found" row when absent.
@@ -98,35 +149,29 @@ fn expand_key_value_rows(
     rows: &mut Vec<(String, String)>,
 ) {
     match values {
-        None => rows.push((label.to_string(), "Not Found".to_string())),
+        None => rows.push(check_row(label, NOT_FOUND_DISPLAY)),
         Some(v) if v.is_empty() => {
-            rows.push((label.to_string(), "(key exists, no values)".to_string()));
+            rows.push(check_row(label, "(key exists, no values)"));
         }
         Some(v) => {
             for (name, data) in v {
-                rows.push((format!("{label} - {name}"), data.clone()));
+                rows.push(check_row(&format!("{label} - {name}"), data.clone()));
             }
         }
     }
 }
 
 pub(crate) fn log_adaptiva_remote_version(url: &str, version: &Option<String>) {
-    let rows = match version {
-        Some(v) => vec![
-            vec!["Source URL".to_string(), url.to_string()],
-            vec!["Remote Version".to_string(), v.clone()],
-        ],
-        None => vec![
-            vec!["Source URL".to_string(), url.to_string()],
-            vec!["Remote Version".to_string(), "(not found/empty)".to_string()],
-        ],
-    };
+    let remote_version = version.as_deref().unwrap_or("(not found/empty)");
+    let rows = vec![
+        vec!["Source URL".to_string(), url.to_string()],
+        vec!["Remote Version".to_string(), remote_version.to_string()],
+    ];
 
-    log::info!("{}", build_ascii_table(
-        "Adaptiva Remote Version",
-        &["Setting", "Value"],
-        &rows,
-    ));
+    log::info!(
+        "{}",
+        build_ascii_table("Adaptiva Remote Version", &["Setting", "Value"], &rows,)
+    );
 }
 
 pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry]) {
@@ -134,16 +179,10 @@ pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry]) {
     let mut detail_rows = Vec::new();
 
     for entry in entries {
-        let version = if entry.file_version.is_empty() {
-            &entry.version_number
-        } else {
-            &entry.file_version
-        };
-
         core_rows.push(vec![
             entry.category.clone(),
             entry.description.clone(),
-            version.to_string(),
+            entry.preferred_version().to_string(),
         ]);
 
         detail_rows.push(vec![
@@ -172,11 +211,8 @@ pub(crate) fn log_osd_catalog(entries: &[SoftwareEntry]) {
     );
 
     let footer_rows = vec![vec!["Total Entries".to_string(), entries.len().to_string()]];
-    let summary_table = build_ascii_table(
-        "OSD Catalog Summary",
-        &["Metric", "Value"],
-        &footer_rows,
-    );
+    let summary_table =
+        build_ascii_table("OSD Catalog Summary", &["Metric", "Value"], &footer_rows);
 
     log::info!("{}", core_table);
     log::info!("{}", detail_table);
@@ -221,7 +257,13 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
 
     let detail_table = build_ascii_table(
         "Installed vs OSD Details",
-        &["Target", "OSD Description", "Download Link", "Install Args", "Note"],
+        &[
+            "Target",
+            "OSD Description",
+            "Download Link",
+            "Install Args",
+            "Note",
+        ],
         &detail_rows,
     );
 
@@ -231,16 +273,17 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
 
 fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String {
     let widths = compute_widths(headers, rows);
-    let mut lines = Vec::new();
-
-    lines.push(title.to_string());
-    lines.push(String::new());
-    lines.push(build_separator(&widths));
-    lines.push(build_ascii_row(
-        &headers.iter().map(|value| (*value).to_string()).collect::<Vec<String>>(),
-        &widths,
-    ));
-    lines.push(build_separator(&widths));
+    let header_cells = headers
+        .iter()
+        .map(|value| (*value).to_string())
+        .collect::<Vec<String>>();
+    let mut lines = vec![
+        title.to_string(),
+        String::new(),
+        build_separator(&widths),
+        build_ascii_row(&header_cells, &widths),
+        build_separator(&widths),
+    ];
 
     for row in rows {
         lines.push(build_ascii_row(row, &widths));
@@ -253,7 +296,7 @@ fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> Str
 fn build_ascii_row(cells: &[String], widths: &[usize]) -> String {
     let mut line = String::from("|");
     for (index, width) in widths.iter().enumerate() {
-        let cell = cells.get(index).map_or("", String::as_str).replace(['\r', '\n'], " ");
+        let cell = clean_table_cell(cells.get(index).map_or("", String::as_str));
         line.push(' ');
         line.push_str(&format!("{cell:<width$}", width = *width));
         line.push(' ');
@@ -263,7 +306,10 @@ fn build_ascii_row(cells: &[String], widths: &[usize]) -> String {
 }
 
 fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
-    let mut widths: Vec<usize> = headers.iter().map(|header| header.chars().count()).collect();
+    let mut widths: Vec<usize> = headers
+        .iter()
+        .map(|header| header.chars().count())
+        .collect();
 
     for row in rows {
         if row.len() > widths.len() {
@@ -271,7 +317,7 @@ fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
         }
 
         for (index, cell) in row.iter().enumerate() {
-            let length = cell.replace(['\r', '\n'], " ").chars().count();
+            let length = clean_table_cell(cell).chars().count();
             if length > widths[index] {
                 widths[index] = length;
             }
@@ -279,6 +325,10 @@ fn compute_widths(headers: &[&str], rows: &[Vec<String>]) -> Vec<usize> {
     }
 
     widths
+}
+
+fn clean_table_cell(cell: &str) -> String {
+    cell.replace(['\r', '\n'], " ")
 }
 
 fn build_separator(widths: &[usize]) -> String {

@@ -8,7 +8,18 @@ use std::path::Path;
 use winreg::RegKey;
 use winreg::enums::*;
 
-use crate::installed::{read_executable_file_version, get_webstart_add_remove_installed_version};
+use crate::installed::{get_webstart_add_remove_installed_version, read_executable_file_version};
+use crate::utils::{NOT_FOUND_COMPACT, NOT_FOUND_DISPLAY};
+
+const ADAPTIVA_CLIENT_NATIVE: &str = r"SOFTWARE\Adaptiva\client";
+const ADAPTIVA_CLIENT_WOW: &str = r"SOFTWARE\WOW6432Node\Adaptiva\client";
+const CDK_ADAPTIVA_NATIVE: &str = r"SOFTWARE\CDK\Adaptiva";
+const CDK_ADAPTIVA_WOW: &str = r"SOFTWARE\WOW6432Node\CDK\Adaptiva";
+const WEBSTART_EXE_PATH: &str =
+    r"C:\Program Files (x86)\CDK\CDKDriveWebStart\CDK Drive WebStart.exe";
+const SIA_DIR: &str = r"C:\Program Files (x86)\CDK\sia";
+const SIA_XML_PATH: &str = r"C:\Program Files (x86)\CDK\sia\cdk_sia_win10_maint.xml";
+const SIA_FIX_PATH: &str = r"C:\Program Files (x86)\CDK\sia\w10_fix.vbs";
 
 /// Status returned by a registry key + named-value presence check.
 #[derive(Debug, Clone, PartialEq)]
@@ -115,98 +126,36 @@ pub fn gather() -> CdkInfo {
     let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
     let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
 
-    let adp_check = registry_value_check(
-        &hklm,
-        r"SOFTWARE\WOW6432Node\ADP\wsvc\4.5",
-        "version",
-    );
+    let adp_check = registry_value_check(&hklm, r"SOFTWARE\WOW6432Node\ADP\wsvc\4.5", "version");
 
-    let webstart_url_check = registry_value_check(
-        &hklm,
-        r"SOFTWARE\Classes\CDKDrive",
-        "URL Protocol",
-    );
+    let webstart_url_check =
+        registry_value_check(&hklm, r"SOFTWARE\Classes\CDKDrive", "URL Protocol");
 
     let webstart_shell_var = read_shell_command(&hkcr);
 
-    let unify_drive_enabler_check = registry_value_check(
-        &hklm,
-        r"SOFTWARE\CDKGlobal",
-        "CDKUnifyDriveEnabler",
-    );
+    let unify_drive_enabler_check =
+        registry_value_check(&hklm, r"SOFTWARE\CDKGlobal", "CDKUnifyDriveEnabler");
 
-    let adaptiva_check = registry_value_check(
-        &hklm,
-        r"SOFTWARE\Adaptiva\client",
-        "setup.status",
-    );
+    let adaptiva_check = registry_value_check(&hklm, ADAPTIVA_CLIENT_NATIVE, "setup.status");
 
-    let adaptiva_cdk_key_values = read_key_values_recursive(&hklm, r"SOFTWARE\CDK\Adaptiva");
-    let adaptiva_cdk_key_wow_values =
-        read_key_values_recursive(&hklm, r"SOFTWARE\WOW6432Node\CDK\Adaptiva");
+    let adaptiva_cdk_key_values = read_key_values_recursive(&hklm, CDK_ADAPTIVA_NATIVE);
+    let adaptiva_cdk_key_wow_values = read_key_values_recursive(&hklm, CDK_ADAPTIVA_WOW);
 
-    let adaptiva_server_host_name = read_registry_string(
-        &hklm,
-        r"SOFTWARE\Adaptiva\client",
-        "setup.server_host_name",
-    );
-    let adaptiva_server_host_name_wow = read_registry_string(
-        &hklm,
-        r"SOFTWARE\WOW6432Node\Adaptiva\client",
-        "setup.server_host_name",
-    );
-    let adaptiva_server_locator_name = read_registry_string(
-        &hklm,
-        r"SOFTWARE\Adaptiva\client",
-        "server_locator.server_name",
-    );
-    let adaptiva_server_locator_name_wow = read_registry_string(
-        &hklm,
-        r"SOFTWARE\WOW6432Node\Adaptiva\client",
-        "server_locator.server_name",
-    );
+    let (adaptiva_server_host_name, adaptiva_server_host_name_wow) =
+        read_adaptiva_client_value_pair(&hklm, "setup.server_host_name");
+    let (adaptiva_server_locator_name, adaptiva_server_locator_name_wow) =
+        read_adaptiva_client_value_pair(&hklm, "server_locator.server_name");
+    let (adaptiva_setup_guid, adaptiva_setup_guid_wow) =
+        read_adaptiva_client_value_pair(&hklm, "setup.server_guid");
+    let (adaptiva_client_data_manager_guid, adaptiva_client_data_manager_guid_wow) =
+        read_adaptiva_client_value_pair(&hklm, "client_data_manager.server_guid");
 
-    let adaptiva_setup_guid = read_registry_string(
-        &hklm,
-        r"SOFTWARE\Adaptiva\client",
-        "setup.server_guid",
-    );
-    let adaptiva_client_data_manager_guid = read_registry_string(
-        &hklm,
-        r"SOFTWARE\Adaptiva\client",
-        "client_data_manager.server_guid",
-    );
-    let adaptiva_setup_guid_wow = read_registry_string(
-        &hklm,
-        r"SOFTWARE\WOW6432Node\Adaptiva\client",
-        "setup.server_guid",
-    );
-    let adaptiva_client_data_manager_guid_wow = read_registry_string(
-        &hklm,
-        r"SOFTWARE\WOW6432Node\Adaptiva\client",
-        "client_data_manager.server_guid",
-    );
+    let sia_check = path_check(SIA_DIR);
+    let sia_xml_check = path_check(SIA_XML_PATH);
+    let sia_fix_check = path_check(SIA_FIX_PATH);
 
-    let sia_check = path_check(r"C:\Program Files (x86)\CDK\sia");
-    let sia_xml_check = path_check(r"C:\Program Files (x86)\CDK\sia\cdk_sia_win10_maint.xml");
-    let sia_fix_check = path_check(r"C:\Program Files (x86)\CDK\sia\w10_fix.vbs");
-
-    let webstart_version = {
-        let exe = Path::new(
-            r"C:\Program Files (x86)\CDK\CDKDriveWebStart\CDK Drive WebStart.exe",
-        );
-        match read_executable_file_version(exe) {
-            Ok(Some(v)) => v,
-            _ => "NotFound".to_string(),
-        }
-    };
-
-    let webstart_add_remove_version = {
-        match get_webstart_add_remove_installed_version() {
-            Ok(Some(product)) => product.version,
-            _ => "NotFound".to_string(),
-        }
-    };
+    let webstart_version = read_webstart_executable_version();
+    let webstart_add_remove_version = read_webstart_add_remove_version();
 
     CdkInfo {
         adp_check,
@@ -232,6 +181,27 @@ pub fn gather() -> CdkInfo {
     }
 }
 
+fn read_adaptiva_client_value_pair(hive: &RegKey, value_name: &str) -> (String, String) {
+    (
+        read_registry_string(hive, ADAPTIVA_CLIENT_NATIVE, value_name),
+        read_registry_string(hive, ADAPTIVA_CLIENT_WOW, value_name),
+    )
+}
+
+fn read_webstart_executable_version() -> String {
+    match read_executable_file_version(Path::new(WEBSTART_EXE_PATH)) {
+        Ok(Some(version)) => version,
+        _ => NOT_FOUND_COMPACT.to_string(),
+    }
+}
+
+fn read_webstart_add_remove_version() -> String {
+    match get_webstart_add_remove_installed_version() {
+        Ok(Some(product)) => product.version,
+        _ => NOT_FOUND_COMPACT.to_string(),
+    }
+}
+
 /// Checks whether `value_name` exists as a named value under `subkey` within
 /// `hive`.
 ///
@@ -245,11 +215,10 @@ fn registry_value_check(hive: &RegKey, subkey: &str, value_name: &str) -> Regist
         Err(_) => return RegistryCheckStatus::PathMissing,
     };
 
-    let name_lower = value_name.to_ascii_lowercase();
     let exists = key
         .enum_values()
         .filter_map(|r| r.ok())
-        .any(|(n, _)| n.to_ascii_lowercase() == name_lower);
+        .any(|(name, _)| name.eq_ignore_ascii_case(value_name));
 
     if exists {
         RegistryCheckStatus::Found
@@ -354,11 +323,11 @@ fn format_reg_value(value: &winreg::RegValue) -> String {
 fn read_registry_string(hive: &RegKey, subkey: &str, value_name: &str) -> String {
     let key = match hive.open_subkey(subkey) {
         Ok(k) => k,
-        Err(_) => return "Not Found".to_string(),
+        Err(_) => return NOT_FOUND_DISPLAY.to_string(),
     };
     match key.get_value::<String, _>(value_name) {
         Ok(v) => v,
-        Err(_) => "Not Found".to_string(),
+        Err(_) => NOT_FOUND_DISPLAY.to_string(),
     }
 }
 
@@ -388,4 +357,3 @@ fn path_check(path: &str) -> PathCheckStatus {
         Err(e) => PathCheckStatus::Error(e.to_string()),
     }
 }
-
