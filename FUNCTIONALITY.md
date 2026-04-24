@@ -1,6 +1,6 @@
 # CDK Drive Updater Functionality Reference
 
-This document is the AI-oriented operational map for the repository. Keep it synchronized with `src/` whenever behavior, public types, module responsibilities, configuration, logging, or target software definitions change.
+This document is the AI-oriented operational map for the repository. Keep it synchronized with `src/` whenever behavior, public types, module responsibilities, configuration, logging, or target software definitions change. Also update it when build or release packaging behavior changes in a way future agents need to preserve.
 
 ## Data Flow
 
@@ -35,6 +35,25 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 | Install args override | `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive 3rd Party Managed Assemblies 96.x |
 | Install args override | `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive WebStart |
 | Install args override | `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for BlueZone |
+
+## Build And Release Packaging
+
+Purpose: build a Windows executable with the project icon embedded and publish a single executable artifact rather than the full Cargo output tree.
+
+| File / setting | Role |
+| --- | --- |
+| `build.rs` | On Windows, compiles Windows resources with `winresource` and embeds `resources/logo.ico` as the executable icon. |
+| `resources/logo.ico` | Application icon used by the Windows executable resource. |
+| `[build-dependencies] winresource` | Build-time dependency used only for Windows resource compilation. |
+| `[profile.release] opt-level = "z"` | Optimizes release builds for smaller binary size. |
+| `[profile.release] lto = "thin"` | Enables thin link-time optimization for size/runtime balance without the slowest full-LTO path. |
+| `[profile.release] codegen-units = 1` | Lets the optimizer see more code together for a smaller release binary. |
+| `[profile.release] panic = "abort"` | Removes unwind machinery from release builds. |
+| `[profile.release] strip = "symbols"` | Strips symbols from the release executable. |
+| `scripts/build-release.ps1` | Runs `cargo build --release`, creates `dist/`, and copies only `target/release/cdk-drive-updater.exe` to `dist/cdk-drive-updater.exe`. |
+| `.gitignore` `/dist` | Keeps generated release artifacts out of source control. |
+
+Release artifact rule: `dist/cdk-drive-updater.exe` is the intended slim distributable. Do not copy Cargo intermediates, `resources/`, logs, `.env`, or local configuration into the release directory unless a future runtime requirement explicitly needs them.
 
 ## `main.rs`
 
