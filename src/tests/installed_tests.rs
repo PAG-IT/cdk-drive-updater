@@ -79,3 +79,19 @@ fn select_highest_version_returns_newest_match() {
     assert_eq!(selected.product_name, "BlueZone 6.2 Hotfix");
     assert_eq!(selected.version, "6.2.1.23");
 }
+
+#[test]
+fn product_name_match_ignores_spacing_and_punctuation() {
+    assert!(product_name_matches(
+        "CDK Drive WebStart",
+        WEBSTART_ADD_REMOVE_PATTERN
+    ));
+    assert!(product_name_matches(
+        "CDK Drive 3rd Party Managed Assemblies 96.x",
+        "cdk drive 3rd party managed assemblies"
+    ));
+    assert!(!product_name_matches(
+        "CDK Drive WebStart",
+        ADAPTIVA_ADD_REMOVE_PATTERN
+    ));
+}
