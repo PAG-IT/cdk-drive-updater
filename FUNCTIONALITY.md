@@ -137,7 +137,7 @@ Pre-install process termination: `kill_process_if_running()` calls `taskkill /F 
 
 ## `installed.rs`
 
-Purpose: Windows MSI registry scanning and executable file-version detection for target software.
+Purpose: Windows Add/Remove Programs, MSI registry, and executable file-version detection for target software.
 
 ### Types
 
@@ -167,7 +167,7 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 | `detect_adaptiva` | `pub fn detect_adaptiva(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the Adaptiva detector. |
 | `detect_bluezone` | `pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the BlueZone detector. |
 | `get_webstart_installed_version_from_cdk_info` | `pub fn get_webstart_installed_version_from_cdk_info(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Returns WebStart version from `CdkInfo`, preferring Add/Remove MSI version over executable file version. |
-| `get_installed_version` | `pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>>` | Scans `HKCR\Installer\Products` and returns the highest matching MSI version. |
+| `get_installed_version` | `pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>>` | Scans Add/Remove uninstall keys for `DisplayVersion`, scans `HKCR\Installer\Products` as a fallback source, and returns the highest matching version. |
 | `read_executable_file_version` | `pub(crate) fn read_executable_file_version(path: &Path) -> Result<Option<String>>` | Reads Windows fixed file-version metadata from an executable. |
 
 ### Key Internal Functions
@@ -188,7 +188,7 @@ Purpose: Windows MSI registry scanning and executable file-version detection for
 
 ### Key Algorithms
 
-MSI version decoding: `get_installed_version()` scans `HKEY_CLASSES_ROOT\Installer\Products`, opens each product subkey, filters `ProductName` by case-insensitive substring, reads the `Version` DWORD, and passes `(ProductName, Version)` to `decode_msi_version()`. `decode_msi_version()` first tries to extract a product-name version such as `V-104.21.517.125`; if absent, it unpacks the DWORD as `major = top byte`, `minor = next byte`, and `build = low word`.
+Installed app version detection: `get_installed_version()` first scans Add/Remove uninstall keys under HKLM native, HKLM WOW6432Node, and HKCU, filters `DisplayName` by tolerant case-insensitive matching, and uses `DisplayVersion` so four-part versions such as `104.21.517.125` are preserved. It also scans `HKEY_CLASSES_ROOT\Installer\Products`, filters `ProductName`, reads the MSI `Version` DWORD, and passes `(ProductName, Version)` to `decode_msi_version()` as a fallback source. `decode_msi_version()` first tries to extract a product-name version such as `V-104.21.517.125`; if absent, it unpacks the DWORD as `major = top byte`, `minor = next byte`, and `build = low word`.
 
 `V-` prefix extraction: `extract_version_from_name()` finds `v-` case-insensitively, takes following ASCII digits and dots, trims trailing dots, and accepts the result only when it contains at least one dot.
 
