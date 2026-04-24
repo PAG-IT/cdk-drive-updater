@@ -2,9 +2,9 @@
 
 Keep `README.md` and `FUNCTIONALITY.md` synchronized with source changes.
 
-Update `README.md` when a change affects user-facing behavior, prerequisites, configuration, CLI flags, output/logging, architecture, module responsibilities, or tracked software.
+Update `README.md` when a change affects user-facing behavior, prerequisites, configuration, CLI flags, output/logging, architecture, module responsibilities, tracked software, build commands, or release packaging.
 
-Update `FUNCTIONALITY.md` when a change affects `src/` behavior, public/exported types, functions, constants, data flow, algorithms, configuration sources, target software definitions, or log table structures.
+Update `FUNCTIONALITY.md` when a change affects `src/` behavior, public/exported types, functions, constants, data flow, algorithms, configuration sources, target software definitions, log table structures, build scripts, release profile settings, or release packaging.
 
 Required `README.md` structure:
 
@@ -22,6 +22,7 @@ Required `FUNCTIONALITY.md` structure:
 
 - Data Flow
 - Configuration
+- Build and release packaging when non-default build behavior exists
 - One H2 section for each source module: `main.rs`, `installed.rs`, `cdk_info.rs`, and `app_logging.rs`
 - For each module: purpose, types, constants when applicable, public/exported functions, key internal functions when they explain behavior, and key algorithms
 - Target software table showing `installed_name`, `osd_description`, and detection function
