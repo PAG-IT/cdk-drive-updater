@@ -207,7 +207,7 @@ main.rs
 
 | Friendly Name | OSD Description | Detection Method | Auto-Install |
 | --- | --- | --- | --- |
-| CDK Drive 3rd Party Managed Assemblies 96.x | CDK Drive 3rd Party Managed Assemblies 96.x | `HKCR\Installer\Products` MSI scan | Yes (`CDK_3RD_PARTY_INSTALL_ARGS`) |
+| CDK Drive 3rd Party Managed Assemblies 96.x | CDK Drive 3rd Party Managed Assemblies 96.x | Add/Remove `DisplayVersion`, with MSI product scan fallback | Yes (`CDK_3RD_PARTY_INSTALL_ARGS`) |
 | Adaptiva | CDK Software Install Agent ( Adaptiva ) | MSI scan + `OneSiteClient.exe` file version | No (external/CDK SIA) |
 | BlueZone | CDK Terminal Emulator | `bzvt.exe` file version under Program Files | Yes (`CDK_BLUEZONE_INSTALL_ARGS`) |
 | CDK Drive WebStart | CDK Drive WebStart | Add/Remove Programs MSI scan + `CDK Drive WebStart.exe` file version fallback (cached in `CdkInfo`) | Yes (`CDK_WEBSTART_INSTALL_ARGS`) |
