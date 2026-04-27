@@ -117,6 +117,15 @@ pub(crate) fn cdk_info_entries(info: &cdk_info::CdkInfo) -> Vec<(String, String)
             "WebStart Version (Add/Remove)",
             info.webstart_add_remove_version.clone(),
         ),
+        check_row(
+            "CDK 3rd Party Assemblies Version",
+            info.cdk_3rd_party_assemblies_version.clone(),
+        ),
+        check_row(
+            "Adaptiva Installed Version",
+            info.adaptiva_installed_version.clone(),
+        ),
+        check_row("BlueZone Version", info.bluezone_version.clone()),
     ]);
 
     entries

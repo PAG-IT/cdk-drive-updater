@@ -78,24 +78,33 @@ pub fn get_webstart_add_remove_installed_version() -> Result<Option<InstalledPro
     get_installed_version(WEBSTART_ADD_REMOVE_PATTERN)
 }
 
-/// Adapter used by target processing: ignores `cdk_info` and resolves version
-/// directly from installed MSI products.
+/// Adapter used by target processing: returns the version cached in the
+/// `CdkInfo` snapshot.
 pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(
-    _cdk_info: &CdkInfo,
+    cdk_info: &CdkInfo,
 ) -> Result<Option<InstalledProduct>> {
-    get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version()
+    Ok(product_from_reported_version(
+        CDK_DRIVE_3RD_PARTY_MANAGED_ASSEMBLIES_96X_PATTERN,
+        &cdk_info.cdk_3rd_party_assemblies_version,
+    ))
 }
 
-/// Adapter used by target processing: ignores `cdk_info` and resolves version
-/// directly from Add/Remove MSI products.
-pub fn detect_adaptiva(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
-    get_adaptiva_installed_version()
+/// Adapter used by target processing: returns the version cached in the
+/// `CdkInfo` snapshot instead of re-running registry and filesystem scans.
+pub fn detect_adaptiva(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
+    Ok(product_from_reported_version(
+        ADAPTIVA_ADD_REMOVE_PATTERN,
+        &cdk_info.adaptiva_installed_version,
+    ))
 }
 
-/// Adapter used by target processing: ignores `cdk_info` and resolves version
-/// directly from BlueZone executables.
-pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
-    get_bluezone_installed_version()
+/// Adapter used by target processing: returns the version cached in the
+/// `CdkInfo` snapshot instead of re-running the filesystem walk.
+pub fn detect_bluezone(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>> {
+    Ok(product_from_reported_version(
+        "BlueZone",
+        &cdk_info.bluezone_version,
+    ))
 }
 
 /// Returns WebStart version using the cached CDK info snapshot, preferring the

@@ -8,7 +8,11 @@ use std::path::Path;
 use winreg::RegKey;
 use winreg::enums::*;
 
-use crate::installed::{get_webstart_add_remove_installed_version, read_executable_file_version};
+use crate::installed::{
+    get_adaptiva_installed_version, get_bluezone_installed_version,
+    get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version,
+    get_webstart_add_remove_installed_version, read_executable_file_version,
+};
 use crate::utils::{NOT_FOUND_COMPACT, NOT_FOUND_DISPLAY};
 
 const ADAPTIVA_CLIENT_NATIVE: &str = r"SOFTWARE\Adaptiva\client";
@@ -116,6 +120,15 @@ pub struct CdkInfo {
     /// Add/Remove Programs (MSI) version for `CDK Drive WebStart`, or `"NotFound"`
     /// when not installed via MSI.
     pub webstart_add_remove_version: String,
+    /// Detected installed version for `CDK Drive 3rd Party Managed Assemblies 96.x`,
+    /// or `"NotFound"` when not detected.
+    pub cdk_3rd_party_assemblies_version: String,
+    /// Detected installed version for Adaptiva (executable or Add/Remove MSI),
+    /// or `"NotFound"` when not detected.
+    pub adaptiva_installed_version: String,
+    /// Detected installed version for BlueZone (`bzvt.exe`),
+    /// or `"NotFound"` when not detected.
+    pub bluezone_version: String,
 }
 
 /// Gathers all CDK installation info from the local system.
@@ -157,6 +170,13 @@ pub fn gather() -> CdkInfo {
     let webstart_version = read_webstart_executable_version();
     let webstart_add_remove_version = read_webstart_add_remove_version();
 
+    let cdk_3rd_party_assemblies_version =
+        detect_installed_version(get_cdk_drive_3rd_party_managed_assemblies_96x_installed_version);
+    let adaptiva_installed_version =
+        detect_installed_version(get_adaptiva_installed_version);
+    let bluezone_version =
+        detect_installed_version(get_bluezone_installed_version);
+
     CdkInfo {
         adp_check,
         webstart_url_check,
@@ -178,6 +198,21 @@ pub fn gather() -> CdkInfo {
         sia_fix_check,
         webstart_version,
         webstart_add_remove_version,
+        cdk_3rd_party_assemblies_version,
+        adaptiva_installed_version,
+        bluezone_version,
+    }
+}
+
+/// Calls `detector`, returning the version string on success or `NOT_FOUND_COMPACT` on
+/// any failure or absent detection result.
+fn detect_installed_version<F>(detector: F) -> String
+where
+    F: FnOnce() -> anyhow::Result<Option<crate::installed::InstalledProduct>>,
+{
+    match detector() {
+        Ok(Some(product)) => product.version,
+        _ => NOT_FOUND_COMPACT.to_string(),
     }
 }
 
