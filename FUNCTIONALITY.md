@@ -163,9 +163,9 @@ Purpose: Windows Add/Remove Programs, MSI registry, and executable file-version 
 | `get_adaptiva_installed_version` | `pub fn get_adaptiva_installed_version() -> Result<Option<InstalledProduct>>` | Returns the highest Adaptiva version found from executable metadata or Add/Remove MSI entries. |
 | `get_bluezone_installed_version` | `pub fn get_bluezone_installed_version() -> Result<Option<InstalledProduct>>` | Returns the highest BlueZone version found from `bzvt.exe` metadata. |
 | `get_webstart_add_remove_installed_version` | `pub fn get_webstart_add_remove_installed_version() -> Result<Option<InstalledProduct>>` | Returns the newest WebStart version from Add/Remove MSI product registry entries. |
-| `detect_cdk_drive_3rd_party_managed_assemblies_96x` | `pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the MSI detector. |
-| `detect_adaptiva` | `pub fn detect_adaptiva(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the Adaptiva detector. |
-| `detect_bluezone` | `pub fn detect_bluezone(_cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that ignores `CdkInfo` and calls the BlueZone detector. |
+| `detect_cdk_drive_3rd_party_managed_assemblies_96x` | `pub fn detect_cdk_drive_3rd_party_managed_assemblies_96x(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that returns the version cached in `cdk_info.cdk_3rd_party_assemblies_version` via `product_from_reported_version`. |
+| `detect_adaptiva` | `pub fn detect_adaptiva(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that returns the version cached in `cdk_info.adaptiva_installed_version` via `product_from_reported_version`. |
+| `detect_bluezone` | `pub fn detect_bluezone(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Target adapter that returns the version cached in `cdk_info.bluezone_version` via `product_from_reported_version`. |
 | `get_webstart_installed_version_from_cdk_info` | `pub fn get_webstart_installed_version_from_cdk_info(cdk_info: &CdkInfo) -> Result<Option<InstalledProduct>>` | Returns WebStart version from `CdkInfo`, preferring Add/Remove MSI version over executable file version. |
 | `get_installed_version` | `pub fn get_installed_version(name_contains: &str) -> Result<Option<InstalledProduct>>` | Scans Add/Remove uninstall keys for `DisplayVersion`, scans `HKCR\Installer\Products` as a fallback source, and returns the highest matching version. |
 | `read_executable_file_version` | `pub(crate) fn read_executable_file_version(path: &Path) -> Result<Option<String>>` | Reads Windows fixed file-version metadata from an executable. |
@@ -195,6 +195,8 @@ Installed app version detection: `get_installed_version()` first scans Add/Remov
 Executable file version reading: `read_executable_file_version()` converts the path to UTF-16, calls `GetFileVersionInfoSizeW`, loads the version resource with `GetFileVersionInfoW`, queries the root block with `VerQueryValueW`, casts to `VS_FIXEDFILEINFO`, and formats `dwFileVersionMS` / `dwFileVersionLS` as `major.minor.build.revision`.
 
 Highest-version selection: detected products are sorted descending with `utils::compare_versions()`, then the first entry is used. Adaptiva prefers executable metadata over Add/Remove MSI data because `get_adaptiva_installed_version()` returns `executable_match.or(add_remove_match)`.
+
+Adapter caching: `detect_cdk_drive_3rd_party_managed_assemblies_96x`, `detect_adaptiva`, and `detect_bluezone` read from the pre-populated `CdkInfo` snapshot (populated by `cdk_info::gather()`) instead of re-running independent registry and filesystem scans. This avoids redundant work for every call to `TARGET_SOFTWARES` processing and aligns with the pattern used by `get_webstart_installed_version_from_cdk_info`.
 
 ## `cdk_info.rs`
 
