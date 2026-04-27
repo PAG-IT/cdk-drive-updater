@@ -1,6 +1,6 @@
 [package]
 name = "cdk-drive-updater"
-version = "1.1.1"
+version = "1.2.0"
 edition = "2024"
 authors = ["Tyler Morrison"]
 
@@ -10,7 +10,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dotenvy = "0.15"
 fern = "0.7"
 log = "0.4"
-reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "rustls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["blocking", "rustls"] }
 scraper = "0.26.0"
 version-compare = "0.2"
 walkdir = "2.5"
