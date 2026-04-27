@@ -232,6 +232,9 @@ Purpose: gather a single local snapshot of CDK-specific registry keys, Adaptiva 
 | `sia_fix_check` | `PathCheckStatus` | `C:\Program Files (x86)\CDK\sia\w10_fix.vbs`. |
 | `webstart_version` | `String` | File version of `CDK Drive WebStart.exe`, or `NotFound`. |
 | `webstart_add_remove_version` | `String` | Add/Remove Programs (MSI registry) version for `CDK Drive WebStart`, or `NotFound`. |
+| `cdk_3rd_party_assemblies_version` | `String` | Detected installed version for CDK Drive 3rd Party Managed Assemblies 96.x, or `NotFound`. |
+| `adaptiva_installed_version` | `String` | Detected installed version for Adaptiva (executable or Add/Remove MSI), or `NotFound`. |
+| `bluezone_version` | `String` | Detected installed version for BlueZone (`bzvt.exe`), or `NotFound`. |
 
 ### Constants
 
@@ -255,6 +258,7 @@ Purpose: gather a single local snapshot of CDK-specific registry keys, Adaptiva 
 | `read_adaptiva_client_value_pair` | `fn read_adaptiva_client_value_pair(hive: &RegKey, value_name: &str) -> (String, String)` | Reads a named Adaptiva client value from both native and WOW6432Node registry paths. |
 | `read_webstart_executable_version` | `fn read_webstart_executable_version() -> String` | Reads the WebStart executable file version or returns `utils::NOT_FOUND_COMPACT`. |
 | `read_webstart_add_remove_version` | `fn read_webstart_add_remove_version() -> String` | Reads the WebStart Add/Remove MSI version or returns `utils::NOT_FOUND_COMPACT`. |
+| `detect_installed_version` | `fn detect_installed_version<F>(detector: F) -> String` | Calls a zero-argument `installed` detector, returns the version string on success or `utils::NOT_FOUND_COMPACT` on any failure or absent result. |
 | `registry_value_check` | `fn registry_value_check(hive: &RegKey, subkey: &str, value_name: &str) -> RegistryCheckStatus` | Distinguishes missing key, existing key with named value, and existing key without named value. |
 | `read_key_values_recursive` | `fn read_key_values_recursive(hive: &RegKey, subkey: &str) -> Option<Vec<(String, String)>>` | Opens a key and collects all named values from it and descendant subkeys. |
 | `collect_key_values` | `fn collect_key_values(key: &RegKey, prefix: &str, out: &mut Vec<(String, String)>)` | Recursive worker for registry value enumeration. |
