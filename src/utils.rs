@@ -97,14 +97,6 @@ pub(crate) fn safe_filename_token(name: &str) -> String {
     result.trim_matches('_').to_ascii_lowercase()
 }
 
-pub(crate) fn capitalize_first(value: &str) -> String {
-    let mut chars = value.chars();
-    match chars.next() {
-        None => String::new(),
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-    }
-}
-
 pub(crate) fn build_timestamp(now: chrono::DateTime<Local>) -> String {
     let hour_24 = now.hour();
     let hour_12 = match hour_24 % 12 {
