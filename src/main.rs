@@ -11,21 +11,33 @@ mod utils;
 
 use app_logging::TargetComparisonRow;
 use utils::{
-    build_timestamp, capitalize_first, compare_versions, cwd_child, env_path_or_else,
-    exe_dir_child, non_empty_env_var, replace_file, safe_filename_token,
+    build_timestamp, compare_versions, cwd_child, env_path_or_else, exe_dir_child,
+    non_empty_env_var, replace_file, safe_filename_token,
 };
 
 use anyhow::{Context, Result};
 use chrono::Local;
 use reqwest::Url;
 use scraper::{ElementRef, Html, Selector};
+use zip::ZipArchive;
 
 struct TargetSoftware {
     installed_name: &'static str,
     osd_description: &'static str,
     detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>,
-    //=-- ENV var name that overrides the OSD silent install arguments; None = no automated install.
-    install_args_env_var: Option<&'static str>,
+    installer: InstallerKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InstallerKind {
+    Standard {
+        args_env_var: &'static str,
+        default_args: &'static str,
+    },
+    Adaptiva {
+        preadaptiva_override_env_var: &'static str,
+        client_override_env_var: &'static str,
+    },
 }
 
 const ADAPTIVA_OSD_DESCRIPTION: &str = "CDK Software Install Agent ( Adaptiva )";
@@ -37,26 +49,37 @@ const TARGET_SOFTWARES: [TargetSoftware; 4] = [
         installed_name: "CDK Drive 3rd Party Managed Assemblies 96.x",
         osd_description: "CDK Drive 3rd Party Managed Assemblies 96.x",
         detect_installed: installed::detect_cdk_drive_3rd_party_managed_assemblies_96x,
-        install_args_env_var: Some("CDK_3RD_PARTY_INSTALL_ARGS"),
+        installer: InstallerKind::Standard {
+            args_env_var: "CDK_3RD_PARTY_INSTALL_ARGS",
+            default_args: "",
+        },
     },
     TargetSoftware {
         installed_name: "Adaptiva",
         osd_description: ADAPTIVA_OSD_DESCRIPTION,
         detect_installed: installed::detect_adaptiva,
-        //=-- Adaptiva is managed externally (CDK SIA); this tool does not install it.
-        install_args_env_var: None,
+        installer: InstallerKind::Adaptiva {
+            preadaptiva_override_env_var: "CDK_ADAPTIVA_PREADAPTIVA_ARGS",
+            client_override_env_var: "CDK_ADAPTIVA_CLIENT_ARGS",
+        },
     },
     TargetSoftware {
         installed_name: "BlueZone",
         osd_description: "CDK Terminal Emulator",
         detect_installed: installed::detect_bluezone,
-        install_args_env_var: Some("CDK_BLUEZONE_INSTALL_ARGS"),
+        installer: InstallerKind::Standard {
+            args_env_var: "CDK_BLUEZONE_INSTALL_ARGS",
+            default_args: "/silent",
+        },
     },
     TargetSoftware {
         installed_name: "CDK Drive WebStart",
         osd_description: "CDK Drive WebStart",
         detect_installed: installed::get_webstart_installed_version_from_cdk_info,
-        install_args_env_var: Some("CDK_WEBSTART_INSTALL_ARGS"),
+        installer: InstallerKind::Standard {
+            args_env_var: "CDK_WEBSTART_INSTALL_ARGS",
+            default_args: "/quiet /norestart",
+        },
     },
 ];
 
@@ -272,7 +295,12 @@ fn installed_target_row(
     if let Some(result) =
         compare_software_version(entries, target.osd_description, &product.version)
     {
-        let (action, install_args) = if matches!(result.state, VersionState::NeedsUpdate) {
+        let (action, install_args) = if is_adaptiva_target(target) {
+            (
+                "Install skipped: already installed".to_string(),
+                current_target_install_args(mode, target, &result.silent_install_arguments),
+            )
+        } else if matches!(result.state, VersionState::NeedsUpdate) {
             perform_or_describe_install(
                 target,
                 mode,
@@ -361,17 +389,25 @@ fn missing_target_row(
     )
 }
 
+fn is_adaptiva_target(target: &TargetSoftware) -> bool {
+    matches!(target.installer, InstallerKind::Adaptiva { .. })
+}
+
 fn current_target_action(
     mode: &AppMode,
     target: &TargetSoftware,
     osd_args: &str,
 ) -> (String, String) {
-    let install_args = if mode == &AppMode::Query {
+    let install_args = current_target_install_args(mode, target, osd_args);
+    ("No update required".to_string(), install_args)
+}
+
+fn current_target_install_args(mode: &AppMode, target: &TargetSoftware, osd_args: &str) -> String {
+    if mode == &AppMode::Query {
         resolve_target_install_args(target, osd_args)
     } else {
         String::new()
-    };
-    ("No update required".to_string(), install_args)
+    }
 }
 
 fn target_row(target: &TargetSoftware, details: TargetRowDetails) -> TargetComparisonRow {
@@ -545,7 +581,8 @@ fn next_table_sibling(category_element: ElementRef<'_>) -> Option<ElementRef<'_>
     let mut next_node = category_element.next_sibling();
     while let Some(node) = next_node {
         if let Some(element) = ElementRef::wrap(node)
-            && element.value().name() == "table" {
+            && element.value().name() == "table"
+        {
             return Some(element);
         }
         next_node = node.next_sibling();
@@ -625,13 +662,25 @@ fn version_state_as_str(state: &VersionState) -> &'static str {
 
 /// Resolves the effective install arguments for a target without performing any action.
 ///
-/// Returns the ENV override when set, the OSD args otherwise, or an empty string for
-/// targets with no automated install support.
-fn resolve_target_install_args(target: &TargetSoftware, osd_args: &str) -> String {
-    let Some(env_var) = target.install_args_env_var else {
-        return String::new();
-    };
-    non_empty_env_var(env_var).unwrap_or_else(|| osd_args.to_string())
+/// Returns the ENV override when set, otherwise the app-owned default args.
+fn resolve_target_install_args(target: &TargetSoftware, _osd_args: &str) -> String {
+    match target.installer {
+        InstallerKind::Standard {
+            args_env_var,
+            default_args,
+        } => non_empty_env_var(args_env_var).unwrap_or_else(|| default_args.to_string()),
+        InstallerKind::Adaptiva {
+            preadaptiva_override_env_var,
+            client_override_env_var,
+        } => {
+            let preadaptiva_args = resolve_adaptiva_preadaptiva_args(preadaptiva_override_env_var);
+            let client_args = resolve_adaptiva_client_args(client_override_env_var);
+            format!(
+                "preadaptiva.msi: {}; AdaptivaClientSetup.exe: {}",
+                preadaptiva_args, client_args
+            )
+        }
+    }
 }
 
 /// Determines the action string and effective install args for a target that needs to be
@@ -647,15 +696,6 @@ fn perform_or_describe_install(
     config: &AppConfig,
     operation: &str,
 ) -> (String, String) {
-    if target.install_args_env_var.is_none() {
-        //=-- Target has no automated install support; report manual requirement.
-        return (
-            format!("{} required (external)", capitalize_first(operation)),
-            String::new(),
-        );
-    }
-
-    //=-- ENV override takes priority over OSD-provided silent install arguments.
     let resolved_args = resolve_target_install_args(target, osd_args);
 
     if download_link.is_empty() {
@@ -668,10 +708,188 @@ fn perform_or_describe_install(
     match mode {
         AppMode::Query => (format!("Would download and {}", operation), resolved_args),
         AppMode::Update => {
-            let action = actually_install(download_link, &resolved_args, &config.download_dir);
+            let action = match target.installer {
+                InstallerKind::Standard { .. } => {
+                    actually_install(download_link, &resolved_args, &config.download_dir)
+                }
+                InstallerKind::Adaptiva {
+                    preadaptiva_override_env_var,
+                    client_override_env_var,
+                } => actually_install_adaptiva(
+                    download_link,
+                    &config.download_dir,
+                    preadaptiva_override_env_var,
+                    client_override_env_var,
+                ),
+            };
             (action, resolved_args)
         }
     }
+}
+
+fn resolve_adaptiva_preadaptiva_args(override_env_var: &str) -> String {
+    non_empty_env_var(override_env_var)
+        .unwrap_or_else(|| format!("CNUMBER={} HOST={}", adaptiva_cnumber(), adaptiva_host()))
+}
+
+fn resolve_adaptiva_client_args(override_env_var: &str) -> String {
+    non_empty_env_var(override_env_var).unwrap_or_else(|| {
+        format!(
+            "-installorupgrade -servername {} -cloudrelay -serverguid {}",
+            adaptiva_host(),
+            adaptiva_server_guid()
+        )
+    })
+}
+
+fn adaptiva_cnumber() -> String {
+    non_empty_env_var("ADAPTIVA_CNUMBER").unwrap_or_else(|| "C000000".to_string())
+}
+
+fn adaptiva_host() -> String {
+    non_empty_env_var("ADAPTIVA_HOST")
+        .unwrap_or_else(|| "C000000-example.drive.example.com".to_string())
+}
+
+fn adaptiva_server_guid() -> String {
+    non_empty_env_var("ADAPTIVA_SERVER_GUID")
+        .unwrap_or_else(|| "00000000-0000-0000-0000-000000000000".to_string())
+}
+
+fn actually_install_adaptiva(
+    osd_url: &str,
+    download_dir: &Path,
+    preadaptiva_override_env_var: &str,
+    client_override_env_var: &str,
+) -> String {
+    let preadaptiva_args = resolve_adaptiva_preadaptiva_args(preadaptiva_override_env_var);
+    let client_args = resolve_adaptiva_client_args(client_override_env_var);
+
+    let download_url = adaptiva_zip_download_url(osd_url);
+    let zip_path = match download_installer(&download_url, download_dir) {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!(
+                "Adaptiva zip download failed | url={} | error={}",
+                download_url,
+                e
+            );
+            return format!("Download failed: {}", e);
+        }
+    };
+
+    let extract_dir = download_dir.join("CDK_ADAPTIVA_EXP_INS");
+    let install_result = (|| -> Result<String> {
+        if extract_dir.exists() {
+            fs::remove_dir_all(&extract_dir).with_context(|| {
+                format!(
+                    "failed to remove existing Adaptiva extract dir: {}",
+                    extract_dir.display()
+                )
+            })?;
+        }
+        extract_zip(&zip_path, download_dir)?;
+
+        let software_dir = extract_dir.join("software");
+        let preadaptiva_path = software_dir.join("preadaptiva.msi");
+        let client_setup_path = software_dir.join("AdaptivaClientSetup.exe");
+
+        let pre_status = run_installer(&preadaptiva_path, &preadaptiva_args)
+            .with_context(|| "failed to run preadaptiva.msi")?;
+        evaluate_install_status("preadaptiva.msi", &preadaptiva_path, pre_status)?;
+
+        let client_status = run_installer(&client_setup_path, &client_args)
+            .with_context(|| "failed to run AdaptivaClientSetup.exe")?;
+        evaluate_install_status("AdaptivaClientSetup.exe", &client_setup_path, client_status)?;
+
+        Ok("Installed".to_string())
+    })();
+
+    if let Err(e) = fs::remove_file(&zip_path) {
+        log::warn!(
+            "Failed to delete Adaptiva zip | path={} | error={}",
+            zip_path.display(),
+            e
+        );
+    }
+    if let Err(e) = fs::remove_dir_all(&extract_dir) {
+        log::warn!(
+            "Failed to delete Adaptiva extract dir | path={} | error={}",
+            extract_dir.display(),
+            e
+        );
+    }
+
+    match install_result {
+        Ok(label) => format!("{} (Adaptiva)", label),
+        Err(e) => {
+            log::error!("Adaptiva install failed | error={}", e);
+            format!("Install failed: {}", e)
+        }
+    }
+}
+
+fn adaptiva_zip_download_url(osd_url: &str) -> String {
+    osd_url.replace("/index.php", "/download.php")
+}
+
+fn evaluate_install_status(
+    label: &str,
+    path: &Path,
+    status: std::process::ExitStatus,
+) -> Result<()> {
+    let code = status.code().unwrap_or(-1);
+    if status.success() || code == 3010 {
+        log::info!(
+            "Adaptiva installer step completed | label={} | path={} | code={}",
+            label,
+            path.display(),
+            code
+        );
+        Ok(())
+    } else {
+        let description = msiexec_exit_code_description(code);
+        anyhow::bail!("{} failed with exit code {} - {}", label, code, description)
+    }
+}
+
+fn extract_zip(zip_path: &Path, destination: &Path) -> Result<()> {
+    let file = fs::File::open(zip_path)
+        .with_context(|| format!("failed to open zip: {}", zip_path.display()))?;
+    let mut archive = ZipArchive::new(file)
+        .with_context(|| format!("failed to read zip archive: {}", zip_path.display()))?;
+
+    for index in 0..archive.len() {
+        let mut entry = archive
+            .by_index(index)
+            .with_context(|| format!("failed to read zip entry {}", index))?;
+        let Some(enclosed_name) = entry.enclosed_name() else {
+            log::warn!("Skipping unsafe zip entry | name={}", entry.name());
+            continue;
+        };
+        let out_path = destination.join(enclosed_name);
+
+        if entry.is_dir() {
+            fs::create_dir_all(&out_path).with_context(|| {
+                format!("failed to create zip directory: {}", out_path.display())
+            })?;
+        } else {
+            if let Some(parent) = out_path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!(
+                        "failed to create zip parent directory: {}",
+                        parent.display()
+                    )
+                })?;
+            }
+            let mut outfile = fs::File::create(&out_path)
+                .with_context(|| format!("failed to create zip output: {}", out_path.display()))?;
+            std::io::copy(&mut entry, &mut outfile)
+                .with_context(|| format!("failed to extract zip entry: {}", entry.name()))?;
+        }
+    }
+
+    Ok(())
 }
 
 /// Downloads the installer from `url`, runs it with `args`, deletes the local file, and
@@ -1023,9 +1241,17 @@ fn split_install_args(args: &str) -> Vec<String> {
 /// Extracts the last path segment of a URL for use as a local filename.
 fn extract_filename_from_url(url: &str) -> Option<String> {
     let parsed = Url::parse(url).ok()?;
-    let segment = parsed.path_segments()?.next_back()?.to_string();
+    let segments = parsed.path_segments()?.collect::<Vec<_>>();
+    let segment = segments.last()?.to_string();
     if segment.is_empty() {
         None
+    } else if segment.eq_ignore_ascii_case("download.php") {
+        segments
+            .iter()
+            .rev()
+            .skip(1)
+            .find(|segment| !segment.is_empty())
+            .map(|parent| format!("{}.zip", parent))
     } else {
         Some(segment)
     }
