@@ -80,9 +80,14 @@ in the working directory is loaded automatically via `dotenvy`.
 | `LOG_DIR` | No | `./cdk-updater-logs` (relative to cwd) | Directory where timestamped log files are written |
 | `DOWNLOAD_DIR` | No | `./cdk-updater-downloads` (relative to cwd) | Directory where installer files are saved during update mode; deleted after each install |
 | `VARIABLES_DIR` | No | `<exe dir>/cdk-updater-variables` | Directory where each CDK Installation Info check result is written as an individual `.txt` file |
-| `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive 3rd Party Managed Assemblies 96.x |
-| `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK Drive WebStart |
-| `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | Silent install arguments for CDK BlueZone (Terminal Emulator) |
+| `CDK_3RD_PARTY_INSTALL_ARGS` | No | empty string | Silent install arguments for CDK Drive 3rd Party Managed Assemblies 96.x |
+| `CDK_WEBSTART_INSTALL_ARGS` | No | `/quiet /norestart` | Silent install arguments for CDK Drive WebStart |
+| `CDK_BLUEZONE_INSTALL_ARGS` | No | `/silent` | Silent install arguments for CDK BlueZone (Terminal Emulator) |
+| `CDK_ADAPTIVA_PREADAPTIVA_ARGS` | No | `CNUMBER=<ADAPTIVA_CNUMBER> HOST=<ADAPTIVA_HOST>` | Override arguments passed to `preadaptiva.msi` during Adaptiva installs |
+| `CDK_ADAPTIVA_CLIENT_ARGS` | No | `-installorupgrade -servername <ADAPTIVA_HOST> -cloudrelay -serverguid <ADAPTIVA_SERVER_GUID>` | Override arguments passed to `AdaptivaClientSetup.exe` during Adaptiva installs |
+| `ADAPTIVA_CNUMBER` | No | `C000000` | Default `CNUMBER` value used when building `preadaptiva.msi` arguments |
+| `ADAPTIVA_HOST` | No | `C000000-example.drive.example.com` | Default host/server name used when building Adaptiva installer arguments |
+| `ADAPTIVA_SERVER_GUID` | No | `00000000-0000-0000-0000-000000000000` | Default server GUID used when building `AdaptivaClientSetup.exe` arguments |
 
 ### .env example
 
@@ -91,8 +96,13 @@ CDK_DRIVE_OSD_URL=https://your-cdk-server/apps/autoTools/cds/osd/osd.php
 DOWNLOAD_DIR=C:\Temp\cdk-downloads
 VARIABLES_DIR=C:\Temp\cdk-variables
 CDK_3RD_PARTY_INSTALL_ARGS=
-CDK_WEBSTART_INSTALL_ARGS=
-CDK_BLUEZONE_INSTALL_ARGS=
+CDK_WEBSTART_INSTALL_ARGS=/quiet /norestart
+CDK_BLUEZONE_INSTALL_ARGS=/silent
+CDK_ADAPTIVA_PREADAPTIVA_ARGS=
+CDK_ADAPTIVA_CLIENT_ARGS=
+ADAPTIVA_CNUMBER=C000000
+ADAPTIVA_HOST=C000000-example.drive.example.com
+ADAPTIVA_SERVER_GUID=00000000-0000-0000-0000-000000000000
 ```
 
 ---
@@ -107,7 +117,7 @@ cdk-drive-updater [/query | --query | -query | /update | --update | -update]
 | --- | --- | --- |
 | *(none)* | query | Default. Detects installed versions and compares against OSD. Logs exactly what update mode *would* do, but makes no changes. |
 | `/query`, `--query`, `-query` | query | Explicit query mode. Identical to running with no flag. |
-| `/update`, `--update`, `-update` | update | Downloads and silently installs any out-of-date or missing packages (CDK 3rd Party Managed Assemblies, WebStart, BlueZone). Installers are deleted after each install completes. Adaptiva requires external management and is not installed by this tool. |
+| `/update`, `--update`, `-update` | update | Downloads and installs any out-of-date or missing tracked package. Standard installers are run directly with app-owned default args or environment overrides. Adaptiva is handled as a two-step zip-based install: the tool rewrites the OSD `index.php` URL to `download.php`, downloads the zip, extracts it, runs `preadaptiva.msi`, then runs `AdaptivaClientSetup.exe`, and deletes the zip and extracted files afterward. If Adaptiva is already installed, the tool reports `Install skipped: already installed`. |
 
 Flag matching is **case-insensitive** and accepts `/`, `--`, or `-` prefixes.
 
@@ -186,6 +196,8 @@ main.rs
 7. For each entry in `TARGET_SOFTWARES`, call `process_target()`:
    - Detect installed version via the entry's `detect_installed` fn pointer.
    - Compare against OSD catalog entry.
+   - For standard targets, resolve install args from app defaults or env overrides.
+   - For Adaptiva in update mode, download a zip payload, extract it, and run `preadaptiva.msi` plus `AdaptivaClientSetup.exe`.
    - Produce a `TargetComparisonRow`.
 8. Log all tables via `app_logging`.
 
@@ -195,7 +207,7 @@ main.rs
 
 | Module | File | Responsibility |
 | --- | --- | --- |
-| `main` | `src/main.rs` | Entry point, config, arg parsing, HTTP fetching, HTML parsing, comparison orchestration |
+| `main` | `src/main.rs` | Entry point, config, arg parsing, HTTP fetching, HTML parsing, installer orchestration, zip extraction for Adaptiva, and comparison orchestration |
 | `installed` | `src/installed.rs` | Windows registry and executable file-version detection for all tracked packages |
 | `cdk_info` | `src/cdk_info.rs` | Snapshot of CDK-specific registry keys and filesystem paths |
 | `app_logging` | `src/app_logging.rs` | ASCII table builder and all structured log emission functions |
@@ -208,6 +220,6 @@ main.rs
 | Friendly Name | OSD Description | Detection Method | Auto-Install |
 | --- | --- | --- | --- |
 | CDK Drive 3rd Party Managed Assemblies 96.x | CDK Drive 3rd Party Managed Assemblies 96.x | Add/Remove `DisplayVersion`, with MSI product scan fallback | Yes (`CDK_3RD_PARTY_INSTALL_ARGS`) |
-| Adaptiva | CDK Software Install Agent ( Adaptiva ) | MSI scan + `OneSiteClient.exe` file version | No (external/CDK SIA) |
+| Adaptiva | CDK Software Install Agent ( Adaptiva ) | MSI scan + `OneSiteClient.exe` file version | Yes (`CDK_ADAPTIVA_PREADAPTIVA_ARGS`, `CDK_ADAPTIVA_CLIENT_ARGS`) |
 | BlueZone | CDK Terminal Emulator | `bzvt.exe` file version under Program Files | Yes (`CDK_BLUEZONE_INSTALL_ARGS`) |
 | CDK Drive WebStart | CDK Drive WebStart | Add/Remove Programs MSI scan + `CDK Drive WebStart.exe` file version fallback (cached in `CdkInfo`) | Yes (`CDK_WEBSTART_INSTALL_ARGS`) |
