@@ -19,9 +19,10 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 13. `app_logging::log_adaptiva_remote_version()` and `app_logging::log_osd_catalog()` log the remote Adaptiva source and full catalog.
 14. `main()` iterates `TARGET_SOFTWARES`, calling `process_target()` once per target.
 15. `process_target()` calls the target's detection function, compares against the OSD catalog, and either describes (query) or executes (update) the install action via `perform_or_describe_install()`.
-16. In update mode for installable targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, terminates `wsStart_4.exe` with `kill_process_if_running()`, waits 20 seconds only when that process was killed, terminates `wsStartChrome.exe` with `kill_process_if_running()`, runs the installer with `run_installer()`, deletes the downloaded file, and returns an outcome string.
-17. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
-18. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
+16. In update mode for standard targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, terminates `wsStart_4.exe` with `kill_process_if_running()`, waits 20 seconds only when that process was killed, terminates `wsStartChrome.exe` with `kill_process_if_running()`, runs the installer with `run_installer()`, deletes the downloaded file, and returns an outcome string.
+17. In update mode for Adaptiva: `perform_or_describe_install()` calls `actually_install_adaptiva()`, which rewrites the OSD URL from `index.php` to `download.php`, downloads a zip payload, extracts it with `extract_zip()`, runs `preadaptiva.msi`, runs `AdaptivaClientSetup.exe`, then deletes the zip and extraction directory.
+18. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
+19. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
 ## Configuration
 
@@ -32,9 +33,14 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 | Log directory | `LOG_DIR` | No | `<cwd>/cdk-updater-logs` | `init_logging()` |
 | `download_dir` | `DOWNLOAD_DIR` | No | `<cwd>/cdk-updater-downloads` | `download_installer()` |
 | `variables_dir` | `VARIABLES_DIR` | No | `<exe dir>/cdk-updater-variables` | `write_cdk_info_variables()` |
-| Install args override | `CDK_3RD_PARTY_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive 3rd Party Managed Assemblies 96.x |
-| Install args override | `CDK_WEBSTART_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for CDK Drive WebStart |
-| Install args override | `CDK_BLUEZONE_INSTALL_ARGS` | No | OSD silent install arguments | `perform_or_describe_install()` for BlueZone |
+| Install args override | `CDK_3RD_PARTY_INSTALL_ARGS` | No | empty string | `perform_or_describe_install()` for CDK Drive 3rd Party Managed Assemblies 96.x |
+| Install args override | `CDK_WEBSTART_INSTALL_ARGS` | No | `/quiet /norestart` | `perform_or_describe_install()` for CDK Drive WebStart |
+| Install args override | `CDK_BLUEZONE_INSTALL_ARGS` | No | `/silent` | `perform_or_describe_install()` for BlueZone |
+| Adaptiva preinstall args override | `CDK_ADAPTIVA_PREADAPTIVA_ARGS` | No | `CNUMBER=<ADAPTIVA_CNUMBER> HOST=<ADAPTIVA_HOST>` | `resolve_adaptiva_preadaptiva_args()` |
+| Adaptiva client args override | `CDK_ADAPTIVA_CLIENT_ARGS` | No | `-installorupgrade -servername <ADAPTIVA_HOST> -cloudrelay -serverguid <ADAPTIVA_SERVER_GUID>` | `resolve_adaptiva_client_args()` |
+| Adaptiva default C-number | `ADAPTIVA_CNUMBER` | No | `C000000` | `resolve_adaptiva_preadaptiva_args()` |
+| Adaptiva default host | `ADAPTIVA_HOST` | No | `C000000-example.drive.example.com` | `resolve_adaptiva_preadaptiva_args()` / `resolve_adaptiva_client_args()` |
+| Adaptiva default server GUID | `ADAPTIVA_SERVER_GUID` | No | `00000000-0000-0000-0000-000000000000` | `resolve_adaptiva_client_args()` |
 
 ## Build And Release Packaging
 
@@ -57,13 +63,14 @@ Release artifact rule: `dist/cdk-drive-updater.exe` is the intended slim distrib
 
 ## `main.rs`
 
-Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieval, OSD HTML parsing, target orchestration, version comparison through `utils`, and logger initialization.
+Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieval, OSD HTML parsing, standard and Adaptiva installer orchestration, version comparison through `utils`, and logger initialization.
 
 ### Types
 
 | Type | Visibility | Fields / variants | Description |
 | --- | --- | --- | --- |
-| `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>`; `install_args_env_var: Option<&'static str>` | Static target definition used by `process_target()`. `install_args_env_var` is `None` for targets this tool does not install (Adaptiva). |
+| `TargetSoftware` | private | `installed_name: &'static str`; `osd_description: &'static str`; `detect_installed: fn(&cdk_info::CdkInfo) -> Result<Option<installed::InstalledProduct>>`; `installer: InstallerKind` | Static target definition used by `process_target()`. The `installer` field decides whether a target uses the standard single-installer path or the specialized Adaptiva flow. |
+| `InstallerKind` | private | `Standard { args_env_var, default_args }`; `Adaptiva { preadaptiva_override_env_var, client_override_env_var }` | Encodes per-target install behavior and argument resolution. |
 | `AppMode` | private | `Query`; `Update` | Runtime mode parsed from CLI arguments. Implements `Display` as `query` or `update` for logs. |
 | `AppConfig` | private | `version_source_url: String`; `adaptiva_version_url: String`; `download_dir: PathBuf`; `variables_dir: PathBuf` | Environment-derived application configuration. |
 | `SoftwareEntry` | private crate root type | `category: String`; `description: String`; `version_number: String`; `file_version: String`; `silent_install_arguments: String`; `download_link: String` | Parsed OSD catalog row or synthetic Adaptiva row. `preferred_version()` returns `file_version` when present, otherwise `version_number`; `adaptiva()` builds the synthetic Adaptiva entry. |
@@ -83,12 +90,12 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 
 ### Target Software Table
 
-| `installed_name` | `osd_description` | Detection function | `install_args_env_var` |
+| `installed_name` | `osd_description` | Detection function | Installer |
 | --- | --- | --- | --- |
-| `CDK Drive 3rd Party Managed Assemblies 96.x` | `CDK Drive 3rd Party Managed Assemblies 96.x` | `installed::detect_cdk_drive_3rd_party_managed_assemblies_96x` | `Some("CDK_3RD_PARTY_INSTALL_ARGS")` |
-| `Adaptiva` | `CDK Software Install Agent ( Adaptiva )` | `installed::detect_adaptiva` | `None` |
-| `BlueZone` | `CDK Terminal Emulator` | `installed::detect_bluezone` | `Some("CDK_BLUEZONE_INSTALL_ARGS")` |
-| `CDK Drive WebStart` | `CDK Drive WebStart` | `installed::get_webstart_installed_version_from_cdk_info` | `Some("CDK_WEBSTART_INSTALL_ARGS")` |
+| `CDK Drive 3rd Party Managed Assemblies 96.x` | `CDK Drive 3rd Party Managed Assemblies 96.x` | `installed::detect_cdk_drive_3rd_party_managed_assemblies_96x` | `InstallerKind::Standard { args_env_var: "CDK_3RD_PARTY_INSTALL_ARGS", default_args: "" }` |
+| `Adaptiva` | `CDK Software Install Agent ( Adaptiva )` | `installed::detect_adaptiva` | `InstallerKind::Adaptiva { preadaptiva_override_env_var: "CDK_ADAPTIVA_PREADAPTIVA_ARGS", client_override_env_var: "CDK_ADAPTIVA_CLIENT_ARGS" }` |
+| `BlueZone` | `CDK Terminal Emulator` | `installed::detect_bluezone` | `InstallerKind::Standard { args_env_var: "CDK_BLUEZONE_INSTALL_ARGS", default_args: "/silent" }` |
+| `CDK Drive WebStart` | `CDK Drive WebStart` | `installed::get_webstart_installed_version_from_cdk_info` | `InstallerKind::Standard { args_env_var: "CDK_WEBSTART_INSTALL_ARGS", default_args: "/quiet /norestart" }` |
 
 ### Functions
 
@@ -99,18 +106,29 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `AppConfig::from_env` | `fn from_env() -> Result<Self>` | Reads required and optional environment variables, including `VARIABLES_DIR` defaulting to `<exe dir>/cdk-updater-variables`. |
 | `merge_adaptiva_catalog_entry` | `fn merge_adaptiva_catalog_entry(catalog: &mut Vec<SoftwareEntry>, adaptiva_version: String)` | Updates the OSD Adaptiva entry when present or appends a synthetic Adaptiva entry. |
 | `process_target` | `fn process_target(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, cdk_info: &cdk_info::CdkInfo, config: &AppConfig) -> Result<TargetComparisonRow>` | Detects a target's installed version, then delegates row creation to `installed_target_row()` or `missing_target_row()`. |
-| `installed_target_row` | `fn installed_target_row(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, product: installed::InstalledProduct, config: &AppConfig) -> TargetComparisonRow` | Builds the comparison row for an installed target, including update action when the OSD version is newer. |
+| `installed_target_row` | `fn installed_target_row(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, product: installed::InstalledProduct, config: &AppConfig) -> TargetComparisonRow` | Builds the comparison row for an installed target. Adaptiva never re-installs over an existing install; it reports `Install skipped: already installed` while still surfacing the resolved args in query mode. |
 | `missing_target_row` | `fn missing_target_row(entries: &[SoftwareEntry], mode: &AppMode, target: &TargetSoftware, config: &AppConfig) -> TargetComparisonRow` | Builds the comparison row for a missing target, including install action when the OSD entry exists. |
+| `is_adaptiva_target` | `fn is_adaptiva_target(target: &TargetSoftware) -> bool` | Identifies targets that use the specialized Adaptiva installer path. |
 | `current_target_action` | `fn current_target_action(mode: &AppMode, target: &TargetSoftware, osd_args: &str) -> (String, String)` | Returns `"No update required"` and, in query mode, the install args that would be used later. |
+| `current_target_install_args` | `fn current_target_install_args(mode: &AppMode, target: &TargetSoftware, osd_args: &str) -> String` | Returns query-mode install args for display and an empty string in update mode. |
 | `target_row` | `fn target_row(target: &TargetSoftware, details: TargetRowDetails) -> TargetComparisonRow` | Shared row constructor that fills the repeated target identity fields consistently. |
-| `resolve_target_install_args` | `fn resolve_target_install_args(target: &TargetSoftware, osd_args: &str) -> String` | Returns a non-empty ENV override when present, OSD args otherwise, or an empty string for externally managed targets. |
-| `perform_or_describe_install` | `fn perform_or_describe_install(target: &TargetSoftware, mode: &AppMode, download_link: &str, osd_args: &str, config: &AppConfig, operation: &str) -> (String, String)` | Returns `(action, install_args)`. In query mode, returns a description of what would happen. In update mode, calls `actually_install()` and returns the outcome. Targets with `install_args_env_var = None` return an external-management message. |
+| `resolve_target_install_args` | `fn resolve_target_install_args(target: &TargetSoftware, osd_args: &str) -> String` | Resolves standard installer args from an env override or app-owned defaults. For Adaptiva, builds a combined display string containing the effective `preadaptiva.msi` and `AdaptivaClientSetup.exe` arguments. |
+| `perform_or_describe_install` | `fn perform_or_describe_install(target: &TargetSoftware, mode: &AppMode, download_link: &str, osd_args: &str, config: &AppConfig, operation: &str) -> (String, String)` | Returns `(action, install_args)`. In query mode, returns a description of what would happen. In update mode, dispatches to `actually_install()` for standard targets or `actually_install_adaptiva()` for Adaptiva. |
+| `resolve_adaptiva_preadaptiva_args` | `fn resolve_adaptiva_preadaptiva_args(override_env_var: &str) -> String` | Builds `preadaptiva.msi` arguments from an override or from `ADAPTIVA_CNUMBER` plus `ADAPTIVA_HOST`. |
+| `resolve_adaptiva_client_args` | `fn resolve_adaptiva_client_args(override_env_var: &str) -> String` | Builds `AdaptivaClientSetup.exe` arguments from an override or from `ADAPTIVA_HOST` plus `ADAPTIVA_SERVER_GUID`. |
+| `adaptiva_cnumber` | `fn adaptiva_cnumber() -> String` | Returns the effective Adaptiva C-number with a fallback placeholder. |
+| `adaptiva_host` | `fn adaptiva_host() -> String` | Returns the effective Adaptiva host/server name with a fallback placeholder. |
+| `adaptiva_server_guid` | `fn adaptiva_server_guid() -> String` | Returns the effective Adaptiva server GUID with a fallback placeholder. |
+| `actually_install_adaptiva` | `fn actually_install_adaptiva(osd_url: &str, download_dir: &Path, preadaptiva_override_env_var: &str, client_override_env_var: &str) -> String` | Rewrites the OSD URL to the Adaptiva zip download URL, downloads the zip, extracts it, runs `preadaptiva.msi`, runs `AdaptivaClientSetup.exe`, cleans up, and returns a human-readable outcome string. |
+| `adaptiva_zip_download_url` | `fn adaptiva_zip_download_url(osd_url: &str) -> String` | Replaces `/index.php` with `/download.php` for the Adaptiva package download path. |
+| `evaluate_install_status` | `fn evaluate_install_status(label: &str, path: &Path, status: std::process::ExitStatus) -> Result<()>` | Treats exit code `3010` as success with reboot required and converts failing installer statuses into contextual errors. |
 | `actually_install` | `fn actually_install(url: &str, args: &str, download_dir: &Path) -> String` | Downloads the installer; kills `wsStart_4.exe` and waits 20 s only if it was killed; kills `wsStartChrome.exe`; runs the installer; deletes the file; returns a human-readable outcome string. |
 | `kill_process_if_running` | `fn kill_process_if_running(process_name: &str)` | Runs `taskkill /F /IM <name>`; logs success, not-running (exit 128), or failure. |
 | `download_installer` | `fn download_installer(url: &str, download_dir: &Path) -> Result<PathBuf>` | GETs the installer URL, checks HTTP status, writes the body to `download_dir/<filename>`, logs progress, guards zero-byte `Content-Length`, and returns the path. |
 | `run_installer` | `fn run_installer(path: &Path, args: &str) -> Result<std::process::ExitStatus>` | Splits `args` with `split_install_args()` and runs the installer via `Command::new`, waiting for completion. |
 | `split_install_args` | `fn split_install_args(args: &str) -> Vec<String>` | Tokenises an installer argument string by whitespace, respecting double-quoted substrings as single tokens. |
-| `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename. |
+| `extract_filename_from_url` | `fn extract_filename_from_url(url: &str) -> Option<String>` | Returns the last URL path segment for use as a local filename, except `download.php`, which is rewritten to `<parent-segment>.zip` so Adaptiva downloads land with a stable zip filename. |
+| `extract_zip` | `fn extract_zip(zip_path: &Path, destination: &Path) -> Result<()>` | Extracts a zip archive into `destination`, skipping unsafe entries whose names escape the archive root. |
 | `write_cdk_info_variables` | `fn write_cdk_info_variables(info: &cdk_info::CdkInfo, dir: &Path) -> Result<()>` | Creates `dir`; iterates `app_logging::cdk_info_entries(info)`, writing each lowercased `<utils::safe_filename_token(check)>.txt` via `utils::replace_file()`; writes `summary.txt`; writes `last-run.txt` whose content is `<utils::build_timestamp(now)>--<epoch>`. |
 | `fetch_adaptiva_version` | `fn fetch_adaptiva_version(url: &str) -> Result<Option<String>>` | Fetches and trims a plain-text Adaptiva version; returns `None` for empty content. |
 | `fetch_software_catalog` | `fn fetch_software_catalog(source_url: &str) -> Result<Vec<SoftwareEntry>>` | Fetches OSD HTML and parses it into catalog entries. |
@@ -131,7 +149,9 @@ HTML catalog parsing: `parse_software_catalog()` selects `div.category` elements
 
 Version comparison ordering: `compare_software_version()` delegates ordering to `utils::compare_versions()`, which maps `version_compare` results to `std::cmp::Ordering` and falls back to trimmed string ordering when parsing fails.
 
-Update mode behavior: `process_target()` delegates installed/missing cases to row helpers, which delegate install/update decisions to `perform_or_describe_install()`. For targets with `install_args_env_var = None` (Adaptiva), both modes return an external-management message and no download occurs. For installable targets in query mode, the action is `"Would download and install/update"` and the resolved args (ENV override or OSD args) are shown in `install_args`. In update mode, `actually_install()` is called: it downloads the installer to `DOWNLOAD_DIR`; kills `wsStart_4.exe` via `taskkill /F /IM` and waits 20 seconds only when that process was killed; kills `wsStartChrome.exe` via `taskkill /F /IM`; runs the installer via `Command::new` with `split_install_args()` tokens; deletes the file (even on failure); and returns an outcome such as `"Installed (exit code: 0)"` or `"Install failed (exit code: N)"`. Targets that are current or newer in any mode produce `"No update required"`.
+Update mode behavior: `process_target()` delegates installed/missing cases to row helpers, which delegate install/update decisions to `perform_or_describe_install()`. For standard targets in query mode, the action is `"Would download and install/update"` and `install_args` shows the effective args resolved from env overrides or app-owned defaults. In update mode, `actually_install()` is called: it downloads the installer to `DOWNLOAD_DIR`; kills `wsStart_4.exe` via `taskkill /F /IM` and waits 20 seconds only when that process was killed; kills `wsStartChrome.exe` via `taskkill /F /IM`; runs the installer via `Command::new` with `split_install_args()` tokens; deletes the file (even on failure); and returns an outcome such as `"Installed"`, `"Installed - reboot required"`, or `"Install failed: ..."`.
+
+Adaptiva update behavior: missing Adaptiva installs also go through `perform_or_describe_install()`, but the target uses `InstallerKind::Adaptiva`. Query mode reports that the tool would download and install, and `install_args` shows a combined summary for `preadaptiva.msi` and `AdaptivaClientSetup.exe`. Update mode rewrites the OSD URL to `download.php`, downloads the zip, extracts it into `DOWNLOAD_DIR`, runs `preadaptiva.msi`, then `AdaptivaClientSetup.exe`, treats exit code `3010` as success, and removes both the zip file and the extraction directory afterward. If Adaptiva is already installed, `installed_target_row()` reports `Install skipped: already installed` instead of reinstalling over it.
 
 Pre-install process termination: `kill_process_if_running()` calls `taskkill /F /IM <name>`. A zero exit from `taskkill` is logged as a successful kill and returns `true`. Exit code 128 means the process was not running and is logged at info level without warning. Any other non-zero exit or launch failure is logged as a warning. The 20-second sleep runs only after `wsStart_4.exe` was found and killed.
 
@@ -301,7 +321,6 @@ Purpose: shared helpers for behavior that is needed by multiple modules or was p
 | `replace_file` | `fn replace_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()>` | Deletes an existing file via `delete_if_exists()` and writes new contents with path context. |
 | `delete_if_exists` | `fn delete_if_exists(path: &Path)` | Deletes `path` when it exists; logs warnings on deletion or existence-check failure. |
 | `safe_filename_token` | `fn safe_filename_token(name: &str) -> String` | Replaces non-alphanumeric, non-dot, non-hyphen characters with collapsed underscores, trims underscores, and lowercases the result. |
-| `capitalize_first` | `fn capitalize_first(value: &str) -> String` | Uppercases the first character of a string slice. |
 | `build_timestamp` | `fn build_timestamp(now: chrono::DateTime<Local>) -> String` | Formats timestamps as `YYYY-MM-DD--H-MM-am/pm` for log filenames and marker content. |
 
 ## `app_logging.rs`
