@@ -144,3 +144,23 @@ fn compares_webstart_using_osd_description() {
         .expect("comparison result exists");
     assert!(matches!(same.state, VersionState::Same));
 }
+
+#[test]
+fn adapts_adaptiva_index_link_to_download_link() {
+    assert_eq!(
+        adaptiva_zip_download_url(
+            "https://servdemo.cdk.com/apps/autoTools/cds/osd/express/CDK_ADAPTIVA_EXP_INS/index.php"
+        ),
+        "https://servdemo.cdk.com/apps/autoTools/cds/osd/express/CDK_ADAPTIVA_EXP_INS/download.php"
+    );
+}
+
+#[test]
+fn names_php_downloads_after_parent_folder_zip() {
+    assert_eq!(
+        extract_filename_from_url(
+            "https://servdemo.cdk.com/apps/autoTools/cds/osd/express/CDK_ADAPTIVA_EXP_INS/download.php"
+        ),
+        Some("CDK_ADAPTIVA_EXP_INS.zip".to_string())
+    );
+}
