@@ -309,7 +309,92 @@ fn main() -> Result<()> {
         app_logging::log_target_comparisons(&post_rows);
     }
 
+    log_post_run_summary(&mode, &comparison_rows, &config.variables_dir);
+
     Ok(())
+}
+
+/// Writes a human-readable summary after all comparison tables have been logged.
+///
+/// In query mode, reports whether any packages need updating and how to do so.
+/// In update mode, lists each install action that was attempted and whether it
+/// succeeded or failed.  Always points to the variables directory so the caller
+/// knows where to find the per-check `.txt` files and `summary.txt`.
+fn log_post_run_summary(
+    mode: &AppMode,
+    pre_rows: &[TargetComparisonRow],
+    variables_dir: &Path,
+) {
+    log::info!("\n");
+    log::info!("========================================");
+    log::info!("  Post-Run Summary");
+    log::info!("========================================");
+
+    match mode {
+        AppMode::Query => {
+            let needs_update = pre_rows.iter().any(|row| row.action.contains("Would download"));
+            if needs_update {
+                log::info!(
+                    "One or more packages are out of date or missing."
+                );
+                log::info!(
+                    "To install updates, run with: /update"
+                );
+            } else {
+                log::info!("All tracked software is up to date.");
+            }
+        }
+        AppMode::Update => {
+            let install_rows: Vec<_> = pre_rows
+                .iter()
+                .filter(|row| {
+                    !matches!(
+                        row.action.as_str(),
+                        "No update required"
+                            | "Install skipped: already installed"
+                            | "Unavailable"
+                            | "Cannot compare"
+                    )
+                })
+                .collect();
+
+            if install_rows.is_empty() {
+                log::info!(
+                    "All tracked software was already up to date — no installs needed."
+                );
+            } else {
+                log::info!("Install actions performed:");
+                let mut failures: u32 = 0;
+                for row in &install_rows {
+                    let status = if row.action.starts_with("Install failed")
+                        || row.action.starts_with("Download failed")
+                    {
+                        failures += 1;
+                        "FAILED"
+                    } else {
+                        "SUCCESS"
+                    };
+                    log::info!("  - {}: {} — {}", row.target, row.action, status);
+                }
+                if failures > 0 {
+                    log::warn!(
+                        "WARNING: {} install(s) failed. Check the log above for details.",
+                        failures
+                    );
+                } else {
+                    log::info!("All installs completed successfully.");
+                }
+            }
+        }
+    }
+
+    log::info!(
+        "Variables written to: {}",
+        variables_dir.display()
+    );
+    log::info!(
+        "See summary.txt for the full CDK installation snapshot."
+    );
 }
 
 fn merge_adaptiva_catalog_entry(catalog: &mut Vec<SoftwareEntry>, adaptiva_version: String) {
