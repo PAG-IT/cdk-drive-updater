@@ -22,7 +22,8 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 16. In update mode for standard targets: `perform_or_describe_install()` calls `actually_install()`, which downloads the file with `download_installer()`, terminates `wsStart_4.exe` with `kill_process_if_running()`, waits 20 seconds only when that process was killed, terminates `wsStartChrome.exe` with `kill_process_if_running()`, runs the installer with `run_installer()`, deletes the downloaded file, and returns an outcome string.
 17. In update mode for Adaptiva: `perform_or_describe_install()` calls `actually_install_adaptiva()`, which rewrites the OSD URL from `index.php` to `download.php`, downloads a zip payload, extracts it with `extract_zip()`, runs `preadaptiva.msi`, runs `AdaptivaClientSetup.exe`, then deletes the zip and extraction directory.
 18. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
-19. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
+19. In update mode, if at least one install was attempted, `main()` runs a post-update verification pass that re-gathers local CDK state via `cdk_info::gather()`, rewrites variables, re-fetches the software catalog and Adaptiva version, and re-processes every target in `AppMode::Query` to produce a second comparison table confirming whether installations succeeded. When all targets are already up-to-date (no install attempted), the verification pass is skipped.
+20. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
 ## Configuration
 
