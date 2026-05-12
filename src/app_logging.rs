@@ -276,8 +276,8 @@ pub(crate) fn log_target_comparisons(rows: &[TargetComparisonRow]) {
         &detail_rows,
     );
 
-    log::info!("{}", summary_table);
     log::info!("{}", detail_table);
+    log::info!("{}", summary_table);
 }
 
 fn build_ascii_table(title: &str, headers: &[&str], rows: &[Vec<String>]) -> String {
