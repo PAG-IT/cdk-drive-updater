@@ -36,6 +36,9 @@ detection and update step by:
 4. Emitting a rich ASCII-table report to stdout **and** a timestamped log file.
 5. In **update** mode, downloading and silently installing any out-of-date or
    missing packages (CDK 3rd Party Managed Assemblies, WebStart, BlueZone).
+6. After update mode completes, automatically running a **post-update
+   verification query** that re-gathers local state, re-fetches the OSD catalog,
+   and re-compars all targets to confirm whether installations succeeded.
 
 ---
 
@@ -117,7 +120,7 @@ cdk-drive-updater [/query | --query | -query | /update | --update | -update]
 | --- | --- | --- |
 | *(none)* | query | Default. Detects installed versions and compares against OSD. Logs exactly what update mode *would* do, but makes no changes. |
 | `/query`, `--query`, `-query` | query | Explicit query mode. Identical to running with no flag. |
-| `/update`, `--update`, `-update` | update | Downloads and installs any out-of-date or missing tracked package. Standard installers are run directly with app-owned default args or environment overrides. Adaptiva is handled as a two-step zip-based install: the tool rewrites the OSD `index.php` URL to `download.php`, downloads the zip, extracts it, runs `preadaptiva.msi`, then runs `AdaptivaClientSetup.exe`, and deletes the zip and extracted files afterward. If Adaptiva is already installed, the tool reports `Install skipped: already installed`. |
+| `/update`, `--update`, `-update` | update | Downloads and installs any out-of-date or missing tracked package. Standard installers are run directly with app-owned default args or environment overrides. Adaptiva is handled as a two-step zip-based install: the tool rewrites the OSD `index.php` URL to `download.php`, downloads the zip, extracts it, runs `preadaptiva.msi`, then runs `AdaptivaClientSetup.exe`, and deletes the zip and extracted files afterward. If Adaptiva is already installed, the tool reports `Install skipped: already installed`. **After all installs complete, the tool automatically runs a query pass to re-gather local state and verify the updates, producing a second set of comparison tables.** |
 
 Flag matching is **case-insensitive** and accepts `/`, `--`, or `-` prefixes.
 
@@ -155,6 +158,11 @@ The tool produces the following ASCII tables in order:
 | **OSD Catalog Summary** | Total entry count |
 | **Installed vs OSD Summary** | Per-target: installed version, OSD version, state, action |
 | **Installed vs OSD Details** | Per-target: download link, install args used/planned, notes |
+
+**In update mode**, the CDK Installation Info, OSD Catalog, and Installed vs OSD
+tables appear **twice**: once before the install pass (showing pre-update state)
+and once after the install pass as a **Post-Update Verification Query** (showing
+post-update state).
 
 #### Version state values
 
@@ -200,6 +208,9 @@ main.rs
    - For Adaptiva in update mode, download a zip payload, extract it, and run `preadaptiva.msi` plus `AdaptivaClientSetup.exe`.
    - Produce a `TargetComparisonRow`.
 8. Log all tables via `app_logging`.
+9. In update mode only, repeat steps 4-8 in `AppMode::Query` to verify the
+   post-update state, producing a second full set of CDK Installation Info and
+   Installed vs OSD comparison tables.
 
 ---
 
