@@ -254,6 +254,61 @@ fn main() -> Result<()> {
     }
     app_logging::log_target_comparisons(&comparison_rows);
 
+    //=-- After an update run where at least one install was attempted, re-gather local
+    //=-- state and re-query the OSD catalog to verify that the installed versions now
+    //=-- match expectations.
+    let any_install_attempted = comparison_rows.iter().any(|row| {
+        !matches!(
+            row.action.as_str(),
+            "No update required"
+                | "Install skipped: already installed"
+                | "Unavailable"
+                | "Cannot compare"
+        )
+    });
+
+    if mode == AppMode::Update && any_install_attempted {
+        log::info!("\n");
+        log::info!("========================================");
+        log::info!("  Post-Update Verification Query");
+        log::info!("========================================");
+
+        let post_cdk_info = cdk_info::gather();
+        app_logging::log_cdk_info_summary(&post_cdk_info);
+        write_cdk_info_variables(&post_cdk_info, &config.variables_dir)?;
+
+        let post_catalog = fetch_software_catalog(&config.version_source_url)?;
+        let mut post_catalog = post_catalog;
+        let post_adaptiva_version =
+            fetch_adaptiva_version(&config.adaptiva_version_url).unwrap_or_else(|e| {
+                log::warn!(
+                    "Failed to fetch remote Adaptiva version during post-update check: {}",
+                    e
+                );
+                None
+            });
+        app_logging::log_adaptiva_remote_version(
+            &config.adaptiva_version_url,
+            &post_adaptiva_version,
+        );
+        if let Some(av) = post_adaptiva_version {
+            merge_adaptiva_catalog_entry(&mut post_catalog, av);
+        }
+        app_logging::log_osd_catalog(&post_catalog);
+
+        let mut post_rows = Vec::new();
+        for target in &TARGET_SOFTWARES {
+            post_rows.push(process_target(
+                &post_catalog,
+                &AppMode::Query,
+                target,
+                &post_cdk_info,
+                &config,
+            )?);
+        }
+        app_logging::log_target_comparisons(&post_rows);
+    }
+
     Ok(())
 }
 
