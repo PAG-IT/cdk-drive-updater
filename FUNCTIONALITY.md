@@ -23,7 +23,8 @@ This document is the AI-oriented operational map for the repository. Keep it syn
 17. In update mode for Adaptiva: `perform_or_describe_install()` calls `actually_install_adaptiva()`, which rewrites the OSD URL from `index.php` to `download.php`, downloads a zip payload, extracts it with `extract_zip()`, runs `preadaptiva.msi`, runs `AdaptivaClientSetup.exe`, then deletes the zip and extraction directory.
 18. `app_logging::log_target_comparisons()` logs the installed-vs-OSD summary and details tables.
 19. In update mode, if at least one install was attempted, `main()` runs a post-update verification pass that re-gathers local CDK state via `cdk_info::gather()`, rewrites variables, re-fetches the software catalog and Adaptiva version, and re-processes every target in `AppMode::Query` to produce a second comparison table confirming whether installations succeeded. When all targets are already up-to-date (no install attempted), the verification pass is skipped.
-20. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
+20. `log_post_run_summary()` writes a human-readable Post-Run Summary after all comparison tables. In query mode it reports whether any packages need updating and how to do so. In update mode it lists every install action that was attempted with a SUCCESS/FAILED verdict. Always includes the variables directory path and a pointer to `summary.txt`.
+21. `main()` exits with `Ok(())` on success or returns an `anyhow::Error` on unrecoverable configuration, logging, HTTP, or parsing failures.
 
 ## Configuration
 
@@ -142,6 +143,7 @@ Purpose: entry point, environment configuration, CLI mode parsing, HTTP retrieva
 | `get_software_by_description` | `fn get_software_by_description<'a>(entries: &'a [SoftwareEntry], description: &str) -> Option<&'a SoftwareEntry>` | Finds a catalog entry by case-insensitive description. |
 | `compare_software_version` | `fn compare_software_version(entries: &[SoftwareEntry], description: &str, provided_version: &str) -> Option<SoftwareComparison>` | Compares an installed version to the matching catalog version. |
 | `version_state_as_str` | `fn version_state_as_str(state: &VersionState) -> &'static str` | Converts `VersionState` to the human log string. |
+| `log_post_run_summary` | `fn log_post_run_summary(mode: &AppMode, pre_rows: &[TargetComparisonRow], variables_dir: &Path)` | Writes a human-readable Post-Run Summary after all comparison tables. Lists install actions with SUCCESS/FAILED verdicts in update mode; advises how to update in query mode; always points to the variables directory. |
 | `init_logging` | `fn init_logging() -> Result<PathBuf>` | Creates the log path and configures stdout plus file logging. |
 
 ### Key Algorithms
