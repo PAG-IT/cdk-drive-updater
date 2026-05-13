@@ -156,8 +156,9 @@ The tool produces the following ASCII tables in order:
 | **OSD Catalog Core** | Category, description, version for every entry on the OSD page |
 | **OSD Catalog Details** | Category, description, silent-install arguments, download link |
 | **OSD Catalog Summary** | Total entry count |
-| **Installed vs OSD Summary** | Per-target: installed version, OSD version, state, action |
 | **Installed vs OSD Details** | Per-target: download link, install args used/planned, notes |
+| **Installed vs OSD Summary** | Per-target: installed version, OSD version, state, action |
+| **Post-Run Summary** | Human-readable summary after all tables. In query mode: whether any packages need updating and how to do so. In update mode: a list of every install action attempted with a SUCCESS/FAILED verdict. Always includes the variables directory path and a pointer to `summary.txt`. |
 
 **In update mode**, the CDK Installation Info, OSD Catalog, and Installed vs OSD
 tables appear **twice**: once before the install pass (showing pre-update state)
